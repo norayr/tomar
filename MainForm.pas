@@ -49,6 +49,7 @@ type
     FDataProvider: TCustomHtmlDataProvider;
     FReadStatusDb: TDbf;
     FLoadingFeed: Boolean; // Flag to prevent selection during loading
+    FInSelectItem: Boolean;
 
     procedure CreateControls;
     procedure InitializeDatabase;
@@ -376,74 +377,81 @@ begin
   if not Selected or (Item = nil) then
     Exit;
 
-  // Don't mark as read while loading feed
-  if not FLoadingFeed then
-  begin
-    // Only process if item is currently marked as unread
-    if Item.Data = Pointer(1) then
+  // prevent double-trigger cascades
+  if FInSelectItem then Exit;
+  FInSelectItem := True;
+  try
+    // Don't mark as read while loading feed
+    if not FLoadingFeed then
     begin
-      // Mark item as read
-      NodeData := GetSelectedNodeData;
-      if Assigned(NodeData) and not NodeData.IsFolder then
+      // Only process if item is currently marked as unread
+      if Item.Data = Pointer(1) then
       begin
-        FeedURL := NodeData.FeedURL;
-        if Item.SubItems.Count > 2 then
+        // Mark item as read
+        NodeData := GetSelectedNodeData;
+        if Assigned(NodeData) and not NodeData.IsFolder then
         begin
-          ItemLink := Item.SubItems[2]; // The link is in SubItems[2]
-          MarkItemAsRead(FeedURL, ItemLink);
-          Item.Data := nil; // Mark as read in ListView
-          // Update tree node text
-          UpdateFeedNodeText(FTreeView.Selected);
+          FeedURL := NodeData.FeedURL;
+          if Item.SubItems.Count > 2 then
+          begin
+            ItemLink := Item.SubItems[2]; // The link is in SubItems[2]
+            MarkItemAsRead(FeedURL, ItemLink);
+            Item.Data := nil; // Mark as read in ListView
+            // Update tree node text
+            UpdateFeedNodeText(FTreeView.Selected);
+          end;
         end;
       end;
     end;
-  end;
 
-  // Item.SubItems[1] contains the content (description or YouTube URL)
-  if Item.SubItems.Count > 1 then
-  begin
-    Content := Item.SubItems[1];
-    
-    // Check if this is a YouTube URL
-    if (Pos('youtube.com/watch?v=', Content) > 0) or
-       (Pos('youtu.be/', Content) > 0) then
+    // Item.SubItems[1] contains the content (description or YouTube URL)
+    if Item.SubItems.Count > 1 then
     begin
-      // Extract video ID
-      VideoId := '';
-      if Pos('youtube.com/watch?v=', Content) > 0 then
+      Content := Item.SubItems[1];
+
+      // Check if this is a YouTube URL
+      if (Pos('youtube.com/watch?v=', Content) > 0) or
+         (Pos('youtu.be/', Content) > 0) then
       begin
-        PosStart := Pos('v=', Content) + 2;
-        PosEnd := Pos('&', Content);
-        if PosEnd = 0 then
-          VideoId := Copy(Content, PosStart, Length(Content))
-        else
-          VideoId := Copy(Content, PosStart, PosEnd - PosStart);
+        // Extract video ID
+        VideoId := '';
+        if Pos('youtube.com/watch?v=', Content) > 0 then
+        begin
+          PosStart := Pos('v=', Content) + 2;
+          PosEnd := Pos('&', Content);
+          if PosEnd = 0 then
+            VideoId := Copy(Content, PosStart, Length(Content))
+          else
+            VideoId := Copy(Content, PosStart, PosEnd - PosStart);
+        end
+        else if Pos('youtu.be/', Content) > 0 then
+        begin
+          PosStart := Pos('youtu.be/', Content) + 9;
+          PosEnd := Pos('?', Content);
+          if PosEnd = 0 then
+            VideoId := Copy(Content, PosStart, Length(Content))
+          else
+            VideoId := Copy(Content, PosStart, PosEnd - PosStart);
+        end;
+
+        // Create HTML with embedded YouTube video
+        HtmlContent := '<html><body style="margin:0;padding:20px;font-family:sans-serif;">' +
+                       '<h3>' + Item.Caption + '</h3>' +
+                       '<p><a href="' + Content + '" target="_blank">' + Content + '</a></p>' +
+                       '<p><iframe width="640" height="360" ' +
+                       'src="https://www.youtube.com/embed/' + VideoId + '" ' +
+                       'frameborder="0" allowfullscreen></iframe></p>' +
+                       '</body></html>';
+        FHtmlPanel.SetHTMLFromStr(HtmlContent);
       end
-      else if Pos('youtu.be/', Content) > 0 then
+      else
       begin
-        PosStart := Pos('youtu.be/', Content) + 9;
-        PosEnd := Pos('?', Content);
-        if PosEnd = 0 then
-          VideoId := Copy(Content, PosStart, Length(Content))
-        else
-          VideoId := Copy(Content, PosStart, PosEnd - PosStart);
+        // Regular RSS feed content
+        FHtmlPanel.SetHTMLFromStr(Content);
       end;
-
-      // Create HTML with embedded YouTube video
-      HtmlContent := '<html><body style="margin:0;padding:20px;font-family:sans-serif;">' +
-                     '<h3>' + Item.Caption + '</h3>' +
-                     '<p><a href="' + Content + '" target="_blank">' + Content + '</a></p>' +
-                     '<p><iframe width="640" height="360" ' +
-                     'src="https://www.youtube.com/embed/' + VideoId + '" ' +
-                     'frameborder="0" allowfullscreen></iframe></p>' +
-                     '</body></html>';
-      FHtmlPanel.SetHTMLFromStr(HtmlContent);
-    end
-    else
-    begin
-      // Regular RSS feed content
-      FHtmlPanel.SetHTMLFromStr(Content);
     end;
+  finally
+    FInSelectItem := False
   end;
 end;
 
@@ -835,6 +843,14 @@ begin
           // Update tree node text with unread count
           if Assigned(FTreeView.Selected) then
             UpdateFeedNodeText(FTreeView.Selected);
+        end;
+
+        // Prevent auto-selection from marking first item as read later
+        if Assigned(FListView) then
+        begin
+          FListView.Selected := nil;
+          FListView.ItemFocused := nil;
+          FListView.ItemIndex := -1;   // important
         end;
 
         FLoadingFeed := False; // Re-enable selection events
