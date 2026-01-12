@@ -339,15 +339,58 @@ procedure TFormMain.ListViewSelectItem(Sender: TObject; Item: TListItem;
   Selected: Boolean);
 var
   Content: string;
+  VideoId: string;
+  HtmlContent: string;
+  PosStart, PosEnd: Integer;
 begin
   if not Selected or (Item = nil) then
     Exit;
 
-  // Item.SubItems[1] contains the content (description)
+  // Item.SubItems[1] contains the content (description or YouTube URL)
   if Item.SubItems.Count > 1 then
   begin
     Content := Item.SubItems[1];
-    FHtmlPanel.SetHTMLFromStr(Content);
+    
+    // Check if this is a YouTube URL
+    if (Pos('youtube.com/watch?v=', Content) > 0) or
+       (Pos('youtu.be/', Content) > 0) then
+    begin
+      // Extract video ID
+      VideoId := '';
+      if Pos('youtube.com/watch?v=', Content) > 0 then
+      begin
+        PosStart := Pos('v=', Content) + 2;
+        PosEnd := Pos('&', Content);
+        if PosEnd = 0 then
+          VideoId := Copy(Content, PosStart, Length(Content))
+        else
+          VideoId := Copy(Content, PosStart, PosEnd - PosStart);
+      end
+      else if Pos('youtu.be/', Content) > 0 then
+      begin
+        PosStart := Pos('youtu.be/', Content) + 9;
+        PosEnd := Pos('?', Content);
+        if PosEnd = 0 then
+          VideoId := Copy(Content, PosStart, Length(Content))
+        else
+          VideoId := Copy(Content, PosStart, PosEnd - PosStart);
+      end;
+
+      // Create HTML with embedded YouTube video
+      HtmlContent := '<html><body style="margin:0;padding:20px;font-family:sans-serif;">' +
+                     '<h3>' + Item.Caption + '</h3>' +
+                     '<p><a href="' + Content + '" target="_blank">' + Content + '</a></p>' +
+                     '<p><iframe width="640" height="360" ' +
+                     'src="https://www.youtube.com/embed/' + VideoId + '" ' +
+                     'frameborder="0" allowfullscreen></iframe></p>' +
+                     '</body></html>';
+      FHtmlPanel.SetHTMLFromStr(HtmlContent);
+    end
+    else
+    begin
+      // Regular RSS feed content
+      FHtmlPanel.SetHTMLFromStr(Content);
+    end;
   end;
 end;
 
@@ -575,9 +618,10 @@ var
   Response: string;
   Doc: TXMLDocument;
   ItemNode, ChildNode: TDOMNode;
-  Title, Link, Description, PubDate: string;
+  Title, Link, Description, PubDate, VideoId: string;
   ListItem: TListItem;
   Stream: TStringStream;
+  IsYouTubeFeed: Boolean;
 begin
   FListView.Items.Clear;
   FHtmlPanel.SetHTMLFromStr('<html><body><p>Loading...</p></body></html>');
@@ -590,6 +634,16 @@ begin
     try
       ReadXMLFile(Doc, Stream);
       try
+        // Check if this is a YouTube feed
+        IsYouTubeFeed := False;
+        if Assigned(Doc.DocumentElement) then
+        begin
+          // Check for YouTube namespace or yt:channelId
+          if (Doc.DocumentElement.FindNode('yt:channelId') <> nil) or
+             (Pos('youtube.com', AURL) > 0) then
+            IsYouTubeFeed := True;
+        end;
+
         // Try RSS format first
         ItemNode := Doc.DocumentElement.FindNode('channel');
         if not Assigned(ItemNode) then
@@ -624,7 +678,10 @@ begin
             ListItem := FListView.Items.Add;
             ListItem.Caption := Title;
             ListItem.SubItems.Add(PubDate);
-            ListItem.SubItems.Add(Description);
+            if IsYouTubeFeed then
+              ListItem.SubItems.Add(Link)  // For YouTube, only show the video URL
+            else
+              ListItem.SubItems.Add(Description);
             ListItem.SubItems.Add(Link);
           end
           else if ItemNode.NodeName = 'entry' then // Atom format
@@ -633,6 +690,7 @@ begin
             Link := '';
             Description := '';
             PubDate := '';
+            VideoId := '';
 
             ChildNode := ItemNode.FirstChild;
             while Assigned(ChildNode) do
@@ -641,9 +699,20 @@ begin
                 Title := ChildNode.TextContent
               else if ChildNode.NodeName = 'link' then
               begin
-                if ChildNode.Attributes.GetNamedItem('href') <> nil then
+                // For YouTube, prefer link with rel="alternate"
+                if ChildNode.Attributes.GetNamedItem('rel') <> nil then
+                begin
+                  if ChildNode.Attributes.GetNamedItem('rel').NodeValue = 'alternate' then
+                  begin
+                    if ChildNode.Attributes.GetNamedItem('href') <> nil then
+                      Link := ChildNode.Attributes.GetNamedItem('href').NodeValue;
+                  end;
+                end
+                else if ChildNode.Attributes.GetNamedItem('href') <> nil then
                   Link := ChildNode.Attributes.GetNamedItem('href').NodeValue;
               end
+              else if ChildNode.NodeName = 'yt:videoId' then
+                VideoId := ChildNode.TextContent
               else if (ChildNode.NodeName = 'summary') or
                       (ChildNode.NodeName = 'content') then
                 Description := ChildNode.TextContent
@@ -654,10 +723,17 @@ begin
               ChildNode := ChildNode.NextSibling;
             end;
 
+            // If we have videoId but no link, construct YouTube URL
+            if IsYouTubeFeed and (Link = '') and (VideoId <> '') then
+              Link := 'https://www.youtube.com/watch?v=' + VideoId;
+
             ListItem := FListView.Items.Add;
             ListItem.Caption := Title;
             ListItem.SubItems.Add(PubDate);
-            ListItem.SubItems.Add(Description);
+            if IsYouTubeFeed then
+              ListItem.SubItems.Add(Link)  // For YouTube, only show the video URL
+            else
+              ListItem.SubItems.Add(Description);
             ListItem.SubItems.Add(Link);
           end;
 
