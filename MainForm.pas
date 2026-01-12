@@ -7,7 +7,7 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
   ExtCtrls, Menus, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
-  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF;
+  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5;
 
 type
   TFeedNodeData = class
@@ -47,22 +47,35 @@ type
     FPopupMenu: TPopupMenu;
     FHttpClient: TFPHTTPClient;
     FDataProvider: TCustomHtmlDataProvider;
+    FReadStatusDb: TDbf;
+    FLoadingFeed: Boolean; // Flag to prevent selection during loading
 
     procedure CreateControls;
+    procedure InitializeDatabase;
     procedure TreeViewSelectionChanged(Sender: TObject);
     procedure ListViewSelectItem(Sender: TObject; Item: TListItem; Selected: Boolean);
+    procedure ListViewCustomDrawItem(Sender: TCustomListView; Item: TListItem;
+      State: TCustomDrawState; var DefaultDraw: Boolean);
     procedure TreeViewPopup(Sender: TObject);
 
     procedure MenuAddFolderClick(Sender: TObject);
     procedure MenuAddFeedClick(Sender: TObject);
     procedure MenuDeleteClick(Sender: TObject);
     procedure MenuRefreshClick(Sender: TObject);
+    procedure MenuMarkAllReadClick(Sender: TObject);
 
     procedure LoadFeedList;
     procedure SaveFeedList;
     procedure LoadRSSFeed(const AURL: string);
     function GetSelectedNodeData: TFeedNodeData;
     procedure FreeNodeData(Node: TTreeNode);
+    
+    function ComputeItemHash(const AFeedURL, AItemLink: string): string;
+    function IsItemRead(const AFeedURL, AItemLink: string): Boolean;
+    procedure MarkItemAsRead(const AFeedURL, AItemLink: string);
+    procedure MarkAllItemsAsRead(const AFeedURL: string);
+    function GetUnreadCount(const AFeedURL: string): Integer;
+    procedure UpdateFeedNodeText(Node: TTreeNode);
   public
 
   end;
@@ -187,7 +200,9 @@ begin
   FHttpClient.AllowRedirect := True;
 
   FDataProvider := TCustomHtmlDataProvider.Create(Self);
+  FLoadingFeed := False;
 
+  InitializeDatabase;
   CreateControls;
   LoadFeedList;
 end;
@@ -209,6 +224,13 @@ begin
         Node.Data := nil;
       end;
     end;
+  end;
+
+  if Assigned(FReadStatusDb) then
+  begin
+    if FReadStatusDb.Active then
+      FReadStatusDb.Close;
+    FReadStatusDb.Free;
   end;
 
   FHttpClient.Free;
@@ -257,6 +279,11 @@ begin
   FPopupMenu.Items.Add(MenuItem);
 
   MenuItem := TMenuItem.Create(FPopupMenu);
+  MenuItem.Caption := 'Mark All as Read';
+  MenuItem.OnClick := @MenuMarkAllReadClick;
+  FPopupMenu.Items.Add(MenuItem);
+
+  MenuItem := TMenuItem.Create(FPopupMenu);
   MenuItem.Caption := 'Delete';
   MenuItem.OnClick := @MenuDeleteClick;
   FPopupMenu.Items.Add(MenuItem);
@@ -291,6 +318,7 @@ begin
   FListView.RowSelect := True;
   FListView.ReadOnly := True;
   FListView.OnSelectItem := @ListViewSelectItem;
+  FListView.OnCustomDrawItem := @ListViewCustomDrawItem;
 
   with FListView.Columns.Add do
   begin
@@ -342,9 +370,34 @@ var
   VideoId: string;
   HtmlContent: string;
   PosStart, PosEnd: Integer;
+  FeedURL, ItemLink: string;
+  NodeData: TFeedNodeData;
 begin
   if not Selected or (Item = nil) then
     Exit;
+
+  // Don't mark as read while loading feed
+  if not FLoadingFeed then
+  begin
+    // Only process if item is currently marked as unread
+    if Item.Data = Pointer(1) then
+    begin
+      // Mark item as read
+      NodeData := GetSelectedNodeData;
+      if Assigned(NodeData) and not NodeData.IsFolder then
+      begin
+        FeedURL := NodeData.FeedURL;
+        if Item.SubItems.Count > 2 then
+        begin
+          ItemLink := Item.SubItems[2]; // The link is in SubItems[2]
+          MarkItemAsRead(FeedURL, ItemLink);
+          Item.Data := nil; // Mark as read in ListView
+          // Update tree node text
+          UpdateFeedNodeText(FTreeView.Selected);
+        end;
+      end;
+    end;
+  end;
 
   // Item.SubItems[1] contains the content (description or YouTube URL)
   if Item.SubItems.Count > 1 then
@@ -394,6 +447,21 @@ begin
   end;
 end;
 
+procedure TFormMain.ListViewCustomDrawItem(Sender: TCustomListView; 
+  Item: TListItem; State: TCustomDrawState; var DefaultDraw: Boolean);
+begin
+  // Draw unread items in bold font
+  if Item.Data = Pointer(1) then  // Unread item
+  begin
+    Sender.Canvas.Font.Style := [fsBold];
+  end
+  else
+  begin
+    Sender.Canvas.Font.Style := [];
+  end;
+  DefaultDraw := True;
+end;
+
 procedure TFormMain.TreeViewPopup(Sender: TObject);
 var
   NodeData: TFeedNodeData;
@@ -401,14 +469,14 @@ begin
   // Enable/disable menu items based on selection
   NodeData := GetSelectedNodeData;
 
-  // Refresh only available for feeds, not folders
+  // Refresh and Mark All Read only available for feeds, not folders
   FPopupMenu.Items[3].Enabled := Assigned(NodeData) and not NodeData.IsFolder;
+  FPopupMenu.Items[4].Enabled := Assigned(NodeData) and not NodeData.IsFolder;
 end;
 
 procedure TFormMain.MenuAddFolderClick(Sender: TObject);
 var
   FolderName: string;
-  NewNode: TTreeNode;
   NodeData: TFeedNodeData;
 begin
   FolderName := InputBox('Add Folder', 'Folder name:', '');
@@ -420,9 +488,9 @@ begin
   NodeData.FeedURL := '';
 
   if FTreeView.Selected = nil then
-    NewNode := FTreeView.Items.AddObject(nil, FolderName, NodeData)
+    FTreeView.Items.AddObject(nil, FolderName, NodeData)
   else
-    NewNode := FTreeView.Items.AddChildObject(FTreeView.Selected, FolderName, NodeData);
+    FTreeView.Items.AddChildObject(FTreeView.Selected, FolderName, NodeData);
 
   SaveFeedList;
 end;
@@ -430,7 +498,6 @@ end;
 procedure TFormMain.MenuAddFeedClick(Sender: TObject);
 var
   FeedName, FeedURL: string;
-  NewNode: TTreeNode;
   NodeData: TFeedNodeData;
   ParentNode: TTreeNode;
 begin
@@ -456,9 +523,9 @@ begin
   end;
 
   if ParentNode = nil then
-    NewNode := FTreeView.Items.AddObject(nil, FeedName, NodeData)
+    FTreeView.Items.AddObject(nil, FeedName, NodeData)
   else
-    NewNode := FTreeView.Items.AddChildObject(ParentNode, FeedName, NodeData);
+    FTreeView.Items.AddChildObject(ParentNode, FeedName, NodeData);
 
   SaveFeedList;
 end;
@@ -492,7 +559,7 @@ end;
 procedure TFormMain.LoadFeedList;
 var
   Doc: TXMLDocument;
-  Root, ItemNode, ChildNode: TDOMNode;
+  Root, ChildNode: TDOMNode;
 
   procedure LoadNode(ParentTreeNode: TTreeNode; XMLNode: TDOMNode);
   var
@@ -567,7 +634,6 @@ var
   var
     ItemNode: TDOMElement;
     NodeData: TFeedNodeData;
-    i: Integer;
   begin
     while Assigned(TreeNode) do
     begin
@@ -623,6 +689,7 @@ var
   Stream: TStringStream;
   IsYouTubeFeed: Boolean;
 begin
+  FLoadingFeed := True; // Prevent selection events during loading
   FListView.Items.Clear;
   FHtmlPanel.SetHTMLFromStr('<html><body><p>Loading...</p></body></html>');
   Application.ProcessMessages;
@@ -683,6 +750,16 @@ begin
             else
               ListItem.SubItems.Add(Description);
             ListItem.SubItems.Add(Link);
+            
+            // Mark unread items with bold font
+            if not IsItemRead(AURL, Link) then
+            begin
+              ListItem.Data := Pointer(1); // Mark as unread
+            end
+            else
+            begin
+              ListItem.Data := nil; // Mark as read
+            end;
           end
           else if ItemNode.NodeName = 'entry' then // Atom format
           begin
@@ -735,6 +812,16 @@ begin
             else
               ListItem.SubItems.Add(Description);
             ListItem.SubItems.Add(Link);
+            
+            // Mark unread items with bold font
+            if not IsItemRead(AURL, Link) then
+            begin
+              ListItem.Data := Pointer(1); // Mark as unread
+            end
+            else
+            begin
+              ListItem.Data := nil; // Mark as read
+            end;
           end;
 
           ItemNode := ItemNode.NextSibling;
@@ -743,7 +830,14 @@ begin
         if FListView.Items.Count = 0 then
           FHtmlPanel.SetHTMLFromStr('<html><body><p>No items found in feed.</p></body></html>')
         else
+        begin
           FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an item to view its content.</p></body></html>');
+          // Update tree node text with unread count
+          if Assigned(FTreeView.Selected) then
+            UpdateFeedNodeText(FTreeView.Selected);
+        end;
+
+        FLoadingFeed := False; // Re-enable selection events
 
       finally
         Doc.Free;
@@ -754,6 +848,7 @@ begin
   except
     on E: Exception do
     begin
+      FLoadingFeed := False; // Re-enable selection events
       ShowMessage('Error loading feed: ' + E.Message);
       FHtmlPanel.SetHTMLFromStr('<html><body><p style="color:red;">Error loading feed: ' +
                                 E.Message + '</p></body></html>');
@@ -788,6 +883,216 @@ begin
   begin
     TFeedNodeData(Node.Data).Free;
     Node.Data := nil;
+  end;
+end;
+
+procedure TFormMain.InitializeDatabase;
+var
+  DbPath: string;
+  NeedRecreate: Boolean;
+  i: Integer;
+begin
+  // Create database directory if it doesn't exist
+  DbPath := 'data' + DirectorySeparator;
+  if not DirectoryExists(DbPath) then
+    CreateDir(DbPath);
+
+  FReadStatusDb := TDbf.Create(nil);
+  FReadStatusDb.FilePathFull := DbPath;
+  FReadStatusDb.TableName := 'readstatus.dbf';
+  FReadStatusDb.TableLevel := 7; // Visual dBase VII (supports ftAutoInc)
+
+  // Check if we need to recreate the table (old structure without ITEMHASH)
+  NeedRecreate := False;
+  if FileExists(DbPath + 'readstatus.dbf') then
+  begin
+    try
+      FReadStatusDb.Open;
+      // Check if ITEMHASH field exists
+      NeedRecreate := FReadStatusDb.FindField('ITEMHASH') = nil;
+      FReadStatusDb.Close;
+      
+      if NeedRecreate then
+      begin
+        // Delete old database files
+        DeleteFile(DbPath + 'readstatus.dbf');
+        DeleteFile(DbPath + 'readstatus.dbt');
+        DeleteFile(DbPath + 'readstatus.mdx');
+        // Delete any index files
+        for i := 0 to 9 do
+        begin
+          DeleteFile(DbPath + 'readstatus.cdx');
+          DeleteFile(DbPath + 'readstatus.ndx');
+          DeleteFile(DbPath + 'readstatus.id' + IntToStr(i));
+        end;
+      end;
+    except
+      // If there's an error opening, recreate anyway
+      NeedRecreate := True;
+    end;
+  end;
+
+  // Create table if it doesn't exist or needs recreation
+  if not FileExists(DbPath + 'readstatus.dbf') then
+  begin
+    with FReadStatusDb.FieldDefs do
+    begin
+      Add('ID', ftAutoInc, 0, False);
+      Add('FEEDURL', ftString, 255, True);
+      Add('ITEMLINK', ftString, 255, True);
+      Add('ITEMHASH', ftString, 32, True); // MD5 hash of FEEDURL+ITEMLINK for indexing
+      Add('ISREAD', ftBoolean, 0, True);
+      Add('DATEREAD', ftDateTime, 0, False);
+    end;
+    FReadStatusDb.CreateTable;
+    
+    // Open with exclusive access to add index
+    FReadStatusDb.Exclusive := True;
+    FReadStatusDb.Open;
+    
+    // Add index only when creating the table
+    FReadStatusDb.AddIndex('idxItemHash', 'ITEMHASH', [ixUnique]);
+    
+    FReadStatusDb.Close;
+    FReadStatusDb.Exclusive := False;
+  end;
+
+  // Open the database normally
+  FReadStatusDb.Open;
+  
+  // Set the index as active for fast lookups
+  try
+    FReadStatusDb.IndexName := 'idxItemHash';
+  except
+    // Ignore if index doesn't exist yet
+  end;
+end;
+
+function TFormMain.ComputeItemHash(const AFeedURL, AItemLink: string): string;
+begin
+  Result := MD5Print(MD5String(AFeedURL + AItemLink));
+end;
+
+function TFormMain.IsItemRead(const AFeedURL, AItemLink: string): Boolean;
+var
+  ItemHash: string;
+begin
+  Result := False;
+  if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
+    Exit;
+
+  try
+    ItemHash := ComputeItemHash(AFeedURL, AItemLink);
+    
+    // Use Locate for indexed lookup
+    Result := FReadStatusDb.Locate('ITEMHASH', ItemHash, []);
+  except
+    Result := False;
+  end;
+end;
+
+procedure TFormMain.MarkItemAsRead(const AFeedURL, AItemLink: string);
+var
+  ItemHash: string;
+begin
+  if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
+    Exit;
+
+  // Check if already marked as read
+  if IsItemRead(AFeedURL, AItemLink) then
+    Exit;
+
+  try
+    ItemHash := ComputeItemHash(AFeedURL, AItemLink);
+    
+    FReadStatusDb.Append;
+    FReadStatusDb.FieldByName('FEEDURL').AsString := AFeedURL;
+    FReadStatusDb.FieldByName('ITEMLINK').AsString := AItemLink;
+    FReadStatusDb.FieldByName('ITEMHASH').AsString := ItemHash;
+    FReadStatusDb.FieldByName('ISREAD').AsBoolean := True;
+    FReadStatusDb.FieldByName('DATEREAD').AsDateTime := Now;
+    FReadStatusDb.Post;
+  except
+    on E: Exception do
+      ShowMessage('Error marking item as read: ' + E.Message);
+  end;
+end;
+
+procedure TFormMain.MarkAllItemsAsRead(const AFeedURL: string);
+var
+  i: Integer;
+  ItemLink: string;
+begin
+  // Mark all items in the current ListView as read
+  for i := 0 to FListView.Items.Count - 1 do
+  begin
+    if FListView.Items[i].SubItems.Count > 2 then
+    begin
+      ItemLink := FListView.Items[i].SubItems[2];
+      MarkItemAsRead(AFeedURL, ItemLink);
+      FListView.Items[i].Data := nil; // Mark as read visually
+    end;
+  end;
+  
+  // Update the tree node text
+  if Assigned(FTreeView.Selected) then
+    UpdateFeedNodeText(FTreeView.Selected);
+end;
+
+function TFormMain.GetUnreadCount(const AFeedURL: string): Integer;
+var
+  i: Integer;
+begin
+  Result := 0;
+  
+  // Count unread items in the ListView
+  if not Assigned(FListView) then
+    Exit;
+    
+  // Count items with Data = Pointer(1) which marks unread items
+  for i := 0 to FListView.Items.Count - 1 do
+  begin
+    if FListView.Items[i].Data = Pointer(1) then
+      Inc(Result);
+  end;
+end;
+
+procedure TFormMain.UpdateFeedNodeText(Node: TTreeNode);
+var
+  NodeData: TFeedNodeData;
+  UnreadCount: Integer;
+  BaseText: string;
+begin
+  if not Assigned(Node) then
+    Exit;
+
+  NodeData := TFeedNodeData(Node.Data);
+  if not Assigned(NodeData) or NodeData.IsFolder then
+    Exit;
+
+  UnreadCount := GetUnreadCount(NodeData.FeedURL);
+  
+  // Get base name without unread count
+  BaseText := Node.Text;
+  if Pos(' (', BaseText) > 0 then
+    BaseText := Copy(BaseText, 1, Pos(' (', BaseText) - 1);
+  
+  // Update node text with unread count
+  if UnreadCount > 0 then
+    Node.Text := BaseText + ' (' + IntToStr(UnreadCount) + ')'
+  else
+    Node.Text := BaseText;
+end;
+
+procedure TFormMain.MenuMarkAllReadClick(Sender: TObject);
+var
+  NodeData: TFeedNodeData;
+begin
+  NodeData := GetSelectedNodeData;
+  if Assigned(NodeData) and not NodeData.IsFolder then
+  begin
+    MarkAllItemsAsRead(NodeData.FeedURL);
+    ShowMessage('All items marked as read.');
   end;
 end;
 
