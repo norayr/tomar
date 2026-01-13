@@ -7,9 +7,9 @@
       <Unit>
         <Filename Value="rssreader.lpr"/>
         <IsPartOfProject Value="True"/>
-        <EditorIndex Value="2"/>
+        <EditorIndex Value="8"/>
         <CursorPos X="3" Y="12"/>
-        <UsageCount Value="22"/>
+        <UsageCount Value="80"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -19,57 +19,193 @@
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
         <IsVisibleTab Value="True"/>
-        <TopLine Value="4"/>
-        <CursorPos X="73" Y="9"/>
-        <UsageCount Value="22"/>
+        <TopLine Value="548"/>
+        <CursorPos X="26" Y="593"/>
+        <UsageCount Value="80"/>
         <Loaded Value="True"/>
         <LoadedDesigner Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="../../../../laz/lazarus-4.2/components/turbopower_ipro/iphtml.pas"/>
         <UnitName Value="IpHtml"/>
+        <EditorIndex Value="7"/>
+        <TopLine Value="452"/>
+        <CursorPos X="16" Y="459"/>
+        <UsageCount Value="40"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="../../../../laz/lazarus-4.2/components/turbopower_ipro/iphtmlblocklayout.pas"/>
+        <UnitName Value="ipHtmlBlockLayout"/>
+        <EditorIndex Value="6"/>
+        <TopLine Value="1033"/>
+        <CursorPos Y="1060"/>
+        <UsageCount Value="29"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="../../../../laz/lazarus-4.2/lcl/comctrls.pp"/>
+        <UnitName Value="ComCtrls"/>
+        <EditorIndex Value="4"/>
+        <TopLine Value="1014"/>
+        <CursorPos X="3" Y="1014"/>
+        <UsageCount Value="18"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="../../../../laz/lazarus-4.2/lcl/controls.pp"/>
+        <UnitName Value="Controls"/>
+        <EditorIndex Value="5"/>
+        <TopLine Value="1378"/>
+        <CursorPos X="14" Y="1786"/>
+        <UsageCount Value="18"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="../../../../laz/lazarus-4.2/lcl/graphics.pp"/>
+        <UnitName Value="Graphics"/>
+        <EditorIndex Value="3"/>
+        <TopLine Value="46"/>
+        <CursorPos X="3" Y="74"/>
+        <UsageCount Value="17"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="FeedDBCleanup.pas"/>
+        <EditorIndex Value="2"/>
+        <TopLine Value="126"/>
+        <UsageCount Value="16"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="../../../../laz/lazarus-4.2/lcl/include/control.inc"/>
         <EditorIndex Value="1"/>
-        <TopLine Value="2988"/>
-        <CursorPos X="24" Y="3012"/>
+        <TopLine Value="2497"/>
+        <CursorPos Y="2525"/>
         <UsageCount Value="10"/>
         <Loaded Value="True"/>
       </Unit>
     </Units>
-    <JumpHistory HistoryIndex="8">
+    <JumpHistory HistoryIndex="29">
       <Position>
         <Filename Value="MainForm.pas"/>
+        <Caret Line="583" TopLine="564"/>
       </Position>
       <Position>
         <Filename Value="MainForm.pas"/>
-        <Caret Line="449" Column="17" TopLine="429"/>
+        <Caret Line="582" TopLine="564"/>
       </Position>
       <Position>
         <Filename Value="MainForm.pas"/>
-        <Caret Line="57" Column="29" TopLine="36"/>
-      </Position>
-      <Position>
-        <Filename Value="rssreader.lpr"/>
-        <Caret Line="12" Column="3"/>
+        <Caret Line="583" TopLine="564"/>
       </Position>
       <Position>
         <Filename Value="MainForm.pas"/>
-        <Caret Line="9" Column="70"/>
+        <Caret Line="582" TopLine="564"/>
       </Position>
       <Position>
         <Filename Value="MainForm.pas"/>
-        <Caret Line="59" Column="21" TopLine="39"/>
+        <Caret Line="583" TopLine="564"/>
       </Position>
       <Position>
         <Filename Value="MainForm.pas"/>
-        <Caret Line="399" Column="30" TopLine="381"/>
+        <Caret Line="584" TopLine="564"/>
       </Position>
       <Position>
         <Filename Value="MainForm.pas"/>
-        <Caret Line="59" Column="19" TopLine="34"/>
+        <Caret Line="586" TopLine="564"/>
       </Position>
       <Position>
         <Filename Value="MainForm.pas"/>
-        <Caret Line="204" TopLine="187"/>
+        <Caret Line="585" TopLine="564"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="586" TopLine="564"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="585" TopLine="564"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="605" TopLine="591"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="607" TopLine="591"/>
+      </Position>
+      <Position>
+        <Filename Value="../../../../laz/lazarus-4.2/lcl/include/control.inc"/>
+        <Caret Line="4545" TopLine="4517"/>
+      </Position>
+      <Position>
+        <Filename Value="../../../../laz/lazarus-4.2/lcl/include/control.inc"/>
+        <Caret Line="2346" TopLine="2318"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="505" TopLine="498"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="578" TopLine="564"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="505" TopLine="490"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="509" TopLine="490"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="511" TopLine="490"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="515" TopLine="507"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="516" TopLine="507"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="517" TopLine="507"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="519" TopLine="507"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="520" TopLine="507"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="523" TopLine="507"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="526" TopLine="507"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="548" TopLine="534"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="550" TopLine="534"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="553" TopLine="534"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="554" TopLine="543"/>
       </Position>
     </JumpHistory>
     <RunParams>

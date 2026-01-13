@@ -551,7 +551,8 @@ begin
 
       // Check if this is a YouTube URL
       if (Pos('youtube.com/watch?v=', Content) > 0) or
-         (Pos('youtu.be/', Content) > 0) then
+         (Pos('youtu.be/', Content) > 0) or
+         (Pos('youtube.com/shorts/', Content) > 0) then
       begin
         // Extract video ID
         VideoId := '';
@@ -560,7 +561,16 @@ begin
           PosStart := Pos('v=', Content) + 2;
           PosEnd := Pos('&', Content);
           if PosEnd = 0 then
-            VideoId := Copy(Content, PosStart, Length(Content))
+            VideoId := Copy(Content, PosStart, Length(Content) - PosStart + 1)
+          else
+            VideoId := Copy(Content, PosStart, PosEnd - PosStart);
+        end
+        else if Pos('youtube.com/shorts/', Content) > 0 then
+        begin
+          PosStart := Pos('youtube.com/shorts/', Content) + 19;
+          PosEnd := Pos('?', Content);
+          if PosEnd = 0 then
+            VideoId := Copy(Content, PosStart, Length(Content) - PosStart + 1)
           else
             VideoId := Copy(Content, PosStart, PosEnd - PosStart);
         end
@@ -569,7 +579,7 @@ begin
           PosStart := Pos('youtu.be/', Content) + 9;
           PosEnd := Pos('?', Content);
           if PosEnd = 0 then
-            VideoId := Copy(Content, PosStart, Length(Content))
+            VideoId := Copy(Content, PosStart, Length(Content) - PosStart + 1)
           else
             VideoId := Copy(Content, PosStart, PosEnd - PosStart);
         end;
@@ -578,9 +588,9 @@ begin
         HtmlContent := '<html><body style="margin:0;padding:20px;font-family:sans-serif;">' +
                        '<h3>' + Item.Caption + '</h3>' +
                        '<p><a href="' + Content + '" target="_blank">' + Content + '</a></p>' +
-                       '<p><iframe width="640" height="360" ' +
-                       'src="https://www.youtube.com/embed/' + VideoId + '" ' +
-                       'frameborder="0" allowfullscreen></iframe></p>' +
+                       //'<p><iframe width="640" height="360" ' +
+                       //'src="https://www.youtube.com/embed/' + VideoId + '" ' +
+                       //'frameborder="0" allowfullscreen></iframe></p>' +
                        '</body></html>';
         try
           FHtmlPanel.SetHTMLFromStr(HtmlContent);
@@ -631,6 +641,7 @@ var
   NodeData: TFeedNodeData;
   ShouldMarkAsRead: Boolean;
 begin
+  ShowMessage('entered listviewselectitem');
   // Only process when an item is SELECTED (not deselected)
   if not Selected or (Item = nil) then
     Exit;
@@ -668,7 +679,8 @@ begin
 
       // Check if this is a YouTube URL
       if (Pos('youtube.com/watch?v=', Content) > 0) or
-         (Pos('youtu.be/', Content) > 0) then
+         (Pos('youtu.be/', Content) > 0) or
+         (Pos('youtube.com/shorts/', Content) > 0) then
       begin
         // Extract video ID
         VideoId := '';
@@ -677,7 +689,16 @@ begin
           PosStart := Pos('v=', Content) + 2;
           PosEnd := Pos('&', Content);
           if PosEnd = 0 then
-            VideoId := Copy(Content, PosStart, Length(Content))
+            VideoId := Copy(Content, PosStart, Length(Content)- PosStart + 1)
+          else
+            VideoId := Copy(Content, PosStart, PosEnd - PosStart);
+        end
+        else if Pos('youtube.com/shorts/', Content) > 0 then
+        begin
+          PosStart := Pos('youtube.com/shorts/', Content) + 19;
+          PosEnd := Pos('?', Content);
+          if PosEnd = 0 then
+            VideoId := Copy(Content, PosStart, Length(Content) - PosStart + 1)
           else
             VideoId := Copy(Content, PosStart, PosEnd - PosStart);
         end
@@ -686,7 +707,7 @@ begin
           PosStart := Pos('youtu.be/', Content) + 9;
           PosEnd := Pos('?', Content);
           if PosEnd = 0 then
-            VideoId := Copy(Content, PosStart, Length(Content))
+            VideoId := Copy(Content, PosStart, Length(Content)- PosStart + 1)
           else
             VideoId := Copy(Content, PosStart, PosEnd - PosStart);
         end;

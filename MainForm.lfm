@@ -1,7 +1,7 @@
 object FormMain: TFormMain
-  Left = 736
+  Left = 920
   Height = 700
-  Top = 286
+  Top = 446
   Width = 1000
   Caption = 'RSS Reader'
   Position = poScreenCenter
