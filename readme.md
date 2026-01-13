@@ -2,6 +2,8 @@
 
 very simple, pure pascal rss reader without dependencies.
 
+![](tomar.png)
+
 
 ## build
 
