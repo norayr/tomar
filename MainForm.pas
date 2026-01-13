@@ -532,28 +532,7 @@ begin
     FInSelectItem := False
   end;
 end;
-{
-procedure TFormMain.ListViewMouseDown(Sender: TObject; Button: TMouseButton;
-  Shift: TShiftState; X, Y: Integer);
-var
-  Item: TListItem;
-begin
-  // Only handle left mouse button
-  if Button <> mbLeft then
-    Exit;
 
-  // Get the item at the mouse position
-  Item := FListView.GetItemAt(X, Y);
-
-  if Item <> nil then
-  begin
-    // Manually select the item that was actually clicked
-    FListView.Selected := Item;
-    // Set focus to ensure proper selection handling
-    FListView.ItemFocused := Item;
-  end;
-end;
- }
 procedure TFormMain.TreeViewSelectionChanged(Sender: TObject);
 var
   NodeData: TFeedNodeData;
@@ -679,115 +658,7 @@ begin
     FInSelectItem := False
   end;
 end;
-{
-procedure TFormMain.ListViewSelectItem(Sender: TObject; Item: TListItem;
-  Selected: Boolean);
-var
-  Content: string;
-  VideoId: string;
-  HtmlContent: string;
-  PosStart, PosEnd: Integer;
-  FeedURL, ItemLink: string;
-  NodeData: TFeedNodeData;
-  ShouldMarkAsRead: Boolean;
-begin
-  //ShowMessage('entered listviewselectitem');
-  if not Selected or (Item = nil) then
-    Exit;
 
-  // prevent double-trigger cascades
-  if FInSelectItem then Exit;
-  //ShowMessage ('selecting item ' + Item.Caption);
-  FInSelectItem := True;
-  try
-    ShouldMarkAsRead := False;
-    // Don't mark as read while loading feed
-    if not FLoadingFeed then
-    begin
-      // Only process if item is currently marked as unread
-      if Item.Data = Pointer(1) then
-      begin
-        //ShowMessage('marking as read ' + Item.Caption);
-        // Mark item as read
-        NodeData := GetSelectedNodeData;
-        if Assigned(NodeData) and not NodeData.IsFolder then
-        begin
-          FeedURL := NodeData.FeedURL;
-          if Item.SubItems.Count > 2 then
-          begin
-            ItemLink := Item.SubItems[2]; // The link is in SubItems[2]
-            ShouldMarkAsRead := True;
-            //MarkItemAsRead(FeedURL, ItemLink);
-            //Item.Data := nil; // Mark as read in ListView
-            // Wait a tiny bit before updating the count to ensure UI is stable
-            //ShowMessage ('this is before application.processmessages');
-            //Application.ProcessMessages;
-            //ShowMessage ('this is after application.processmessages');
-            // Update tree node text
-            //UpdateFeedNodeText(FTreeView.Selected);
-          end;
-        end;
-      end;
-    end;
-
-    // Item.SubItems[1] contains the content (description or YouTube URL)
-    if Item.SubItems.Count > 1 then
-    begin
-      Content := Item.SubItems[1];
-
-      // Check if this is a YouTube URL
-      if (Pos('youtube.com/watch?v=', Content) > 0) or
-         (Pos('youtu.be/', Content) > 0) then
-      begin
-        // Extract video ID
-        VideoId := '';
-        if Pos('youtube.com/watch?v=', Content) > 0 then
-        begin
-          PosStart := Pos('v=', Content) + 2;
-          PosEnd := Pos('&', Content);
-          if PosEnd = 0 then
-            VideoId := Copy(Content, PosStart, Length(Content))
-          else
-            VideoId := Copy(Content, PosStart, PosEnd - PosStart);
-        end
-        else if Pos('youtu.be/', Content) > 0 then
-        begin
-          PosStart := Pos('youtu.be/', Content) + 9;
-          PosEnd := Pos('?', Content);
-          if PosEnd = 0 then
-            VideoId := Copy(Content, PosStart, Length(Content))
-          else
-            VideoId := Copy(Content, PosStart, PosEnd - PosStart);
-        end;
-
-        // Create HTML with embedded YouTube video
-        HtmlContent := '<html><body style="margin:0;padding:20px;font-family:sans-serif;">' +
-                       '<h3>' + Item.Caption + '</h3>' +
-                       '<p><a href="' + Content + '" target="_blank">' + Content + '</a></p>' +
-                       '<p><iframe width="640" height="360" ' +
-                       'src="https://www.youtube.com/embed/' + VideoId + '" ' +
-                       'frameborder="0" allowfullscreen></iframe></p>' +
-                       '</body></html>';
-        FHtmlPanel.SetHTMLFromStr(HtmlContent);
-      end
-      else
-      begin
-        // Regular RSS feed content
-        FHtmlPanel.SetHTMLFromStr(Content);
-      end;
-    end;
-    if ShouldMarkAsRead then
-    begin
-      MarkItemAsRead(FeedURL, ItemLink);
-      Item.Data := nil; // Mark as read in ListView
-      // Update tree node text
-      UpdateFeedNodeText(FTreeView.Selected);
-    end;
-  finally
-    FInSelectItem := False
-  end;
-end;
-}
 procedure TFormMain.ListViewCustomDrawItem(Sender: TCustomListView; 
   Item: TListItem; State: TCustomDrawState; var DefaultDraw: Boolean);
 begin
@@ -881,6 +752,8 @@ end;
 procedure TFormMain.MenuDeleteClick(Sender: TObject);
 var
   Node: TTreeNode;
+  NodeData: TFeedNodeData;
+  FeedURL: string;
 begin
   Node := FTreeView.Selected;
   if Node = nil then
@@ -889,6 +762,26 @@ begin
   if MessageDlg('Delete', 'Delete "' + Node.Text + '"?',
                  mtConfirmation, [mbYes, mbNo], 0) = mrYes then
   begin
+    // If it's a feed (not folder), delete its database entries
+    NodeData := TFeedNodeData(Node.Data);
+    if Assigned(NodeData) and not NodeData.IsFolder then
+    begin
+      FeedURL := NodeData.FeedURL;
+
+      // Delete all read status entries for this feed
+      if Assigned(FReadStatusDb) and FReadStatusDb.Active then
+      begin
+        FReadStatusDb.First;
+        while not FReadStatusDb.EOF do
+        begin
+          if FReadStatusDb.FieldByName('FEEDURL').AsString = FeedURL then
+            FReadStatusDb.Delete
+          else
+            FReadStatusDb.Next;
+        end;
+      end;
+    end;
+
     FreeNodeData(Node);
     FTreeView.Items.Delete(Node);
     SaveFeedList;
