@@ -45,6 +45,11 @@ type
     FHtmlPanel: TIpHtmlPanel;
     FHtmlPopup: TPopupMenu;
     FCurrentURL: string; // to track the link under mouse
+
+    FLongPressTimer: TTimer;
+    FLongPressPoint: TPoint;
+    FLongPressControl: TControl;  // Track which control triggered long press
+
     FSplitter1, FSplitter2: TSplitter;
     FPopupMenu: TPopupMenu;
     FHttpClient: TFPHTTPClient;
@@ -60,6 +65,15 @@ type
     procedure ListViewCustomDrawItem(Sender: TCustomListView; Item: TListItem;
       State: TCustomDrawState; var DefaultDraw: Boolean);
     procedure TreeViewPopup(Sender: TObject);
+
+    // TreeView events
+    procedure TreeViewMouseDown(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; X, Y: Integer);
+    procedure TreeViewMouseUp(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; X, Y: Integer);
+    procedure TreeViewMouseMove(Sender: TObject; Shift: TShiftState;
+      X, Y: Integer);
+    procedure LongPressTimerTick(Sender: TObject);
 
     procedure HtmlPanelHotURL(Sender: TObject; const URL: string);
     procedure HtmlPanelContextPopup(Sender: TObject; MousePos: TPoint;
@@ -280,6 +294,11 @@ begin
   FTreeView.OnSelectionChanged := @TreeViewSelectionChanged;
   FTreeView.PopupMenu := TPopupMenu.Create(Self);
 
+  // For long press as right click
+  FTreeView.OnMouseDown := @TreeViewMouseDown;
+  FTreeView.OnMouseUp := @TreeViewMouseUp;
+  FTreeView.OnMouseMove := @TreeViewMouseMove;
+
   // Create popup menu
   FPopupMenu := FTreeView.PopupMenu;
 
@@ -385,13 +404,65 @@ begin
 
   FHtmlPanel.OnHotURL := @HtmlPanelHotURL;
   FHtmlPanel.OnContextPopup := @HtmlPanelContextPopup;
-
   FHtmlPopup := TPopupMenu.Create(Self);
+
+  //long-press timer
+  FLongPressTimer := TTimer.Create(Self);
+  FLongPressTimer.Interval := 500;  // ms
+  FLongPressTimer.Enabled := False;
+  FLongPressTimer.OnTimer := @LongPressTimerTick;
+
   MenuItem := TMenuItem.Create(FHtmlPopup);
   MenuItem.Caption := 'Copy Link';
   MenuItem.OnClick := @MenuCopyLinkClick;
   FHtmlPopup.Items.Add(MenuItem);
   FHtmlPanel.PopupMenu := FHtmlPopup;
+end;
+
+// TreeView long-press handlers
+procedure TFormMain.TreeViewMouseDown(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+begin
+  if Button = mbLeft then
+  begin
+    FLongPressPoint := Point(X, Y);
+    FLongPressControl := FTreeView;
+    FLongPressTimer.Enabled := True;
+  end;
+end;
+
+procedure TFormMain.TreeViewMouseUp(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+begin
+  FLongPressTimer.Enabled := False;
+end;
+
+procedure TFormMain.TreeViewMouseMove(Sender: TObject; Shift: TShiftState;
+  X, Y: Integer);
+begin
+  if FLongPressTimer.Enabled and (FLongPressControl = FTreeView) then
+  begin
+    if (Abs(X - FLongPressPoint.X) > 10) or
+       (Abs(Y - FLongPressPoint.Y) > 10) then
+      FLongPressTimer.Enabled := False;
+  end;
+end;
+
+// HtmlPanel long-press handlers
+// Timer tick - trigger popup menu
+procedure TFormMain.LongPressTimerTick(Sender: TObject);
+var
+  ScreenPoint: TPoint;
+begin
+  FLongPressTimer.Enabled := False;
+
+  // Only handle TreeView long press
+  if FLongPressControl = FTreeView then
+  begin
+    ScreenPoint := FTreeView.ClientToScreen(FLongPressPoint);
+    if Assigned(FPopupMenu) then
+      FPopupMenu.PopUp(ScreenPoint.X, ScreenPoint.Y);
+  end;
 end;
 
 // copy link methods
