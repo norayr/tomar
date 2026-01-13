@@ -316,14 +316,18 @@ begin
   FListView := TListView.Create(Self);
   FListView.Parent := TopPanel;
   FListView.Align := alClient;
-  FListView.ViewStyle := vsReport;
+  //FListView.ViewStyle := vsReport;
+  FListView.ViewStyle := vsList;
   FListView.RowSelect := True;
   FListView.ReadOnly := True;
   //FListView.OnSelectItem := @ListViewSelectItem;
   //FListView.OnClick := @ListViewClick;
   FListView.OnMouseDown := @ListViewMouseDown;
 
+  //FListView.OwnerDraw := False;
+  //FListView.OwnerDraw := True;
   FListView.OnCustomDrawItem := @ListViewCustomDrawItem;
+  //FListView.OnCustomDrawItem := nil;
   FListView.HideSelection := False; // Ensure selection is visible
   FListView.MultiSelect := False; // Ensure only one item can be selected
 
@@ -403,6 +407,8 @@ begin
             ItemLink := Item.SubItems[2]; // The link is in SubItems[2]
             MarkItemAsRead(FeedURL, ItemLink);
             Item.Data := nil; // Mark as read in ListView
+              FListView.Invalidate;
+              FListView.Update;
             // Update tree node text
             UpdateFeedNodeText(FTreeView.Selected);
           end;
@@ -733,11 +739,18 @@ begin
   // Draw unread items in bold font
   if Item.Data = Pointer(1) then  // Unread item
   begin
-    Sender.Canvas.Font.Style := [fsBold];
+    Sender.Canvas.Font.Name := 'Arial';
+    Sender.Canvas.Font.Size := 11;
+    Sender.Canvas.Font.Style := [fsBold, fsUnderline];
+    Sender.Canvas.Font.Color := clBlack;
+    //Sender.Canvas.Font.StrikeThrough := True;
   end
   else
   begin
-    Sender.Canvas.Font.Style := [];
+    Sender.Canvas.Font.Name := 'Courier New';
+    Sender.Canvas.Font.Size := 9;
+    Sender.Canvas.Font.Style := [fsItalic];
+    Sender.Canvas.Font.Color := clGray;
   end;
   DefaultDraw := True;
 end;
@@ -976,7 +989,22 @@ begin
   Application.ProcessMessages;
 
   try
-    Response := FHttpClient.Get(AURL);
+    //Response := FHttpClient.Get(AURL);
+    try
+      Response := FHttpClient.Get(AURL);
+    except
+      on E: Exception do
+      begin
+        FLoadingFeed := False;
+        ShowMessage('Failed to connect to feed:' + LineEnding + LineEnding +
+                    AURL + LineEnding + LineEnding +
+                    'Error: ' + E.Message);
+        FHtmlPanel.SetHTMLFromStr('<html><body><p style="color:red;">Connection failed: ' +
+                                  E.Message + '</p></body></html>');
+        Exit; // Exit the procedure
+      end;
+    end;
+
 
     Stream := TStringStream.Create(Response);
     try
