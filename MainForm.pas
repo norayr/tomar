@@ -99,6 +99,8 @@ type
     procedure MarkAllItemsAsRead(const AFeedURL: string);
     function GetUnreadCount(const AFeedURL: string): Integer;
     procedure UpdateFeedNodeText(Node: TTreeNode);
+
+    function ConvertYouTubeURLToFeed(const AUrl: string): string;
   public
 
   end;
@@ -799,6 +801,8 @@ begin
   if FeedURL = '' then
     Exit;
 
+  FeedURL := ConvertYouTubeURLToFeed(FeedURL);
+
   NodeData := TFeedNodeData.Create;
   NodeData.IsFolder := False;
   NodeData.FeedURL := FeedURL;
@@ -1442,5 +1446,104 @@ begin
     ShowMessage('All items marked as read.');
   end;
 end;
+
+function TFormMain.ConvertYouTubeURLToFeed(const AUrl: string): string;
+var
+  ChannelId: string;
+  PageSource: string;
+  Stream: TStringStream;
+  PosStart, PosEnd: Integer;
+  CleanUrl: string;
+begin
+  Result := AUrl;
+
+  // If it's already a feed URL, return as-is
+  if Pos('feeds/videos.xml', AUrl) > 0 then
+    Exit;
+
+  // Check if it's a YouTube URL
+  if (Pos('youtube.com', LowerCase(AUrl)) = 0) and
+     (Pos('youtu.be', LowerCase(AUrl)) = 0) then
+    Exit;
+
+  // Clean URL - remove query parameters and trailing slashes for parsing
+  CleanUrl := AUrl;
+  PosStart := Pos('?', CleanUrl);   // yt feeds contain '?'
+  if PosStart > 0 then
+    CleanUrl := Copy(CleanUrl, 1, PosStart - 1);
+  while (Length(CleanUrl) > 0) and (CleanUrl[Length(CleanUrl)] = '/') do
+    Delete(CleanUrl, Length(CleanUrl), 1);
+
+  // Case 1: /channel/CHANNEL_ID format
+  PosStart := Pos('/channel/', CleanUrl);
+  if PosStart > 0 then
+  begin
+    ChannelId := Copy(CleanUrl, PosStart + 9, Length(CleanUrl));
+    // Extract just the channel ID (stop at next slash if any)
+    PosEnd := Pos('/', ChannelId);
+    if PosEnd > 0 then
+      ChannelId := Copy(ChannelId, 1, PosEnd - 1);
+
+    if ChannelId <> '' then
+    begin
+      Result := 'https://www.youtube.com/feeds/videos.xml?channel_id=' + ChannelId;
+      Exit;
+    end;
+  end;
+
+  // Case 2: /@handle or /user/USERNAME format - need to fetch page
+  if (Pos('/@', CleanUrl) > 0) or (Pos('/user/', CleanUrl) > 0) or
+     (Pos('/c/', CleanUrl) > 0) then
+  begin
+    Stream := TStringStream.Create('');
+    try
+      try
+        // Fetch the channel page
+        FHttpClient.Get(AUrl, Stream);
+        PageSource := Stream.DataString;
+
+        // Search for channel_id in page source
+        // Pattern: "channelId":"CHANNEL_ID" or channel_id=CHANNEL_ID
+        PosStart := Pos('"channelId":"', PageSource);
+        if PosStart > 0 then
+        begin
+          PosStart := PosStart + 13; // Length of '"channelId":"'
+          PosEnd := PosStart;
+          while (PosEnd <= Length(PageSource)) and (PageSource[PosEnd] <> '"') do
+            Inc(PosEnd);
+          ChannelId := Copy(PageSource, PosStart, PosEnd - PosStart);
+        end
+        else
+        begin
+          // Try alternate pattern
+          PosStart := Pos('channel_id=', PageSource);
+          if PosStart > 0 then
+          begin
+            PosStart := PosStart + 11; // Length of 'channel_id='
+            PosEnd := PosStart;
+            while (PosEnd <= Length(PageSource)) and
+                  (PageSource[PosEnd] in ['A'..'Z', 'a'..'z', '0'..'9', '_', '-']) do
+              Inc(PosEnd);
+            ChannelId := Copy(PageSource, PosStart, PosEnd - PosStart);
+          end;
+        end;
+
+        if ChannelId <> '' then
+          Result := 'https://www.youtube.com/feeds/videos.xml?channel_id=' + ChannelId;
+
+      except
+        on E: Exception do
+        begin
+          // If fetching fails, return original URL
+          // User will get an error when trying to load it as a feed
+          Result := AUrl;
+        end;
+      end;
+    finally
+      Stream.Free;
+    end;
+  end;
+end;
+
 
 end.
