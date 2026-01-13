@@ -7,7 +7,7 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
   ExtCtrls, Menus, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
-  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5;
+  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd;
 
 type
   TFeedNodeData = class
@@ -43,6 +43,8 @@ type
     FTreeView: TTreeView;
     FListView: TListView;
     FHtmlPanel: TIpHtmlPanel;
+    FHtmlPopup: TPopupMenu;
+    FCurrentURL: string; // to track the link under mouse
     FSplitter1, FSplitter2: TSplitter;
     FPopupMenu: TPopupMenu;
     FHttpClient: TFPHTTPClient;
@@ -58,6 +60,11 @@ type
     procedure ListViewCustomDrawItem(Sender: TCustomListView; Item: TListItem;
       State: TCustomDrawState; var DefaultDraw: Boolean);
     procedure TreeViewPopup(Sender: TObject);
+
+    procedure HtmlPanelHotURL(Sender: TObject; const URL: string);
+    procedure HtmlPanelContextPopup(Sender: TObject; MousePos: TPoint;
+       var Handled: Boolean);
+    procedure MenuCopyLinkClick(Sender: TObject);
 
     procedure MenuAddFolderClick(Sender: TObject);
     procedure MenuAddFeedClick(Sender: TObject);
@@ -91,6 +98,7 @@ implementation
 
 uses
   LCLType, LCLIntf;
+  //FeedDBCleanup;
 
 const
   CONFIG_FILE = 'feeds.xml';
@@ -192,6 +200,8 @@ end;
 { TFormMain }
 
 procedure TFormMain.FormCreate(Sender: TObject);
+var
+  Duplicates: TStringList;
 begin
   Caption := 'Տոմար';
   Width := 1000;
@@ -205,6 +215,18 @@ begin
   FLoadingFeed := False;
 
   InitializeDatabase;
+
+  // test
+  //Duplicates := CheckForDuplicateFeeds(CONFIG_FILE);
+  //try
+  //  if Duplicates.Count > 0 then
+  //    ShowMessage('Duplicate feeds found: ' + Duplicates.CommaText);
+  //finally
+  //  Duplicates.Free;
+  //end;
+
+  //CleanupOrphanedReadStatus(CONFIG_FILE, FReadStatusDb);
+  // end of test cleanup
   CreateControls;
   LoadFeedList;
 end;
@@ -360,7 +382,40 @@ begin
   FHtmlPanel.Align := alClient;
   FHtmlPanel.AllowTextSelect := True;
   FHtmlPanel.DataProvider := FDataProvider;
+
+  FHtmlPanel.OnHotURL := @HtmlPanelHotURL;
+  FHtmlPanel.OnContextPopup := @HtmlPanelContextPopup;
+
+  FHtmlPopup := TPopupMenu.Create(Self);
+  MenuItem := TMenuItem.Create(FHtmlPopup);
+  MenuItem.Caption := 'Copy Link';
+  MenuItem.OnClick := @MenuCopyLinkClick;
+  FHtmlPopup.Items.Add(MenuItem);
+  FHtmlPanel.PopupMenu := FHtmlPopup;
 end;
+
+// copy link methods
+
+procedure TFormMain.HtmlPanelHotURL(Sender: TObject; const URL: string);
+begin
+  FCurrentURL := URL;  // Track the URL under mouse
+end;
+
+procedure TFormMain.HtmlPanelContextPopup(Sender: TObject; MousePos: TPoint;
+  var Handled: Boolean);
+begin
+  // Enable "Copy Link" only if over a link
+  if Assigned(FHtmlPopup) and (FHtmlPopup.Items.Count > 0) then
+    FHtmlPopup.Items[0].Enabled := (FCurrentURL <> '');
+end;
+
+procedure TFormMain.MenuCopyLinkClick(Sender: TObject);
+begin
+  if FCurrentURL <> '' then
+    Clipboard.AsText := FCurrentURL;
+end;
+
+// end of copy link
 
 procedure TFormMain.ListViewMouseDown(Sender: TObject; Button: TMouseButton;
   Shift: TShiftState; X, Y: Integer);
