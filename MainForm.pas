@@ -1523,8 +1523,52 @@ begin
         FHttpClient.Get(AUrl, Stream);
         PageSource := Stream.DataString;
 
-        // Search for channel_id in page source
-        // Pattern: "channelId":"CHANNEL_ID" or channel_id=CHANNEL_ID
+        // PRIORITY 1: Look for RSS feed link in <head> section (most reliable)
+        // Pattern: <link rel="alternate" type="application/rss+xml" ... href="https://www.youtube.com/feeds/videos.xml?channel_id=CHANNEL_ID">
+        PosStart := Pos('rel="alternate" type="application/rss+xml"', PageSource);
+        if PosStart > 0 then
+        begin
+          // Find the href attribute after this
+          PosStart := Pos('href="', PageSource, PosStart);
+          if PosStart > 0 then
+          begin
+            PosStart := PosStart + 6; // Length of 'href="'
+            PosEnd := PosStart;
+            while (PosEnd <= Length(PageSource)) and (PageSource[PosEnd] <> '"') do
+              Inc(PosEnd);
+            Result := Copy(PageSource, PosStart, PosEnd - PosStart);
+            // We already have the complete feed URL, so we're done
+            if Pos('feeds/videos.xml?channel_id=', Result) > 0 then
+              Exit;
+          end;
+        end;
+
+        // PRIORITY 2: Look for canonical URL in <head> section (also very reliable)
+        // Pattern: <link rel="canonical" href="https://www.youtube.com/channel/CHANNEL_ID">
+        PosStart := Pos('rel="canonical"', PageSource);
+        if PosStart > 0 then
+        begin
+          PosStart := Pos('href="', PageSource, PosStart);
+          if PosStart > 0 then
+          begin
+            PosStart := PosStart + 6; // Length of 'href="'
+            PosEnd := PosStart;
+            while (PosEnd <= Length(PageSource)) and (PageSource[PosEnd] <> '"') do
+              Inc(PosEnd);
+            ChannelId := Copy(PageSource, PosStart, PosEnd - PosStart);
+            // Extract channel ID from the canonical URL
+            PosStart := Pos('/channel/', ChannelId);
+            if PosStart > 0 then
+            begin
+              ChannelId := Copy(ChannelId, PosStart + 9, Length(ChannelId));
+              Result := 'https://www.youtube.com/feeds/videos.xml?channel_id=' + ChannelId;
+              Exit;
+            end;
+          end;
+        end;
+
+        // FALLBACK: Search for channel_id in page source (less reliable, kept for backwards compatibility)
+        // Only use this if the more reliable methods above failed
         PosStart := Pos('"channelId":"', PageSource);
         if PosStart > 0 then
         begin
