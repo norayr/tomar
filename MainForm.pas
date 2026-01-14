@@ -587,6 +587,9 @@ begin
         // Create HTML with embedded YouTube video
         HtmlContent := '<html><body style="margin:0;padding:20px;font-family:sans-serif;">' +
                        '<h3>' + Item.Caption + '</h3>' +
+                       '<p><img src="https://i.ytimg.com/vi/' + VideoId + '/hqdefault.jpg" ' +
+                       'style="max-width:100%;height:auto;border:1px solid #ccc;" ' +
+                       'alt="Video thumbnail"></p>' +
                        '<p><a href="' + Content + '" target="_blank">' + Content + '</a></p>' +
                        //'<p><iframe width="640" height="360" ' +
                        //'src="https://www.youtube.com/embed/' + VideoId + '" ' +
