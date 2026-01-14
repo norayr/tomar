@@ -84,6 +84,7 @@ type
     procedure MenuAddFeedClick(Sender: TObject);
     procedure MenuDeleteClick(Sender: TObject);
     procedure MenuRefreshClick(Sender: TObject);
+    procedure MenuRefreshFeedsClick(Sender: TObject);
     procedure MenuRefreshAllClick(Sender: TObject);
     procedure MenuMarkAllReadClick(Sender: TObject);
     procedure ListViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
@@ -322,6 +323,11 @@ begin
   MenuItem := TMenuItem.Create(FPopupMenu);
   MenuItem.Caption := 'Refresh Feed';
   MenuItem.OnClick := @MenuRefreshClick;
+  FPopupMenu.Items.Add(MenuItem);
+
+  MenuItem := TMenuItem.Create(FPopupMenu);
+  MenuItem.Caption := 'Refresh Feeds';
+  MenuItem.OnClick := @MenuRefreshFeedsClick;
   FPopupMenu.Items.Add(MenuItem);
 
   MenuItem := TMenuItem.Create(FPopupMenu);
@@ -794,11 +800,14 @@ begin
   // Refresh Feed (index 3) - only available for feeds, not folders
   FPopupMenu.Items[3].Enabled := Assigned(NodeData) and not NodeData.IsFolder;
   
-  // Refresh All Feeds (index 4) - always available
-  FPopupMenu.Items[4].Enabled := True;
+  // Refresh Feeds (index 4) - only available for folders, not feeds
+  FPopupMenu.Items[4].Enabled := Assigned(NodeData) and NodeData.IsFolder;
   
-  // Mark All Read (index 5) - available for both feeds and folders
-  FPopupMenu.Items[5].Enabled := Assigned(NodeData);
+  // Refresh All Feeds (index 5) - always available
+  FPopupMenu.Items[5].Enabled := True;
+  
+  // Mark All Read (index 6) - available for both feeds and folders
+  FPopupMenu.Items[6].Enabled := Assigned(NodeData);
 end;
 
 procedure TFormMain.MenuAddFolderClick(Sender: TObject);
@@ -905,6 +914,59 @@ begin
   NodeData := GetSelectedNodeData;
   if Assigned(NodeData) and not NodeData.IsFolder then
     LoadRSSFeed(NodeData.FeedURL);
+end;
+
+procedure TFormMain.MenuRefreshFeedsClick(Sender: TObject);
+var
+  NodeData: TFeedNodeData;
+  
+  procedure RefreshFeedsInNode(Node: TTreeNode; var Count: Integer);
+  var
+    ChildNode: TTreeNode;
+    ChildData: TFeedNodeData;
+  begin
+    if not Assigned(Node) then
+      Exit;
+      
+    if Assigned(Node.Data) then
+    begin
+      ChildData := TFeedNodeData(Node.Data);
+      
+      if ChildData.IsFolder then
+      begin
+        // Recursively process children
+        ChildNode := Node.GetFirstChild;
+        while Assigned(ChildNode) do
+        begin
+          RefreshFeedsInNode(ChildNode, Count);
+          ChildNode := ChildNode.GetNextSibling;
+        end;
+      end
+      else
+      begin
+        // It's a feed - refresh it
+        FTreeView.Selected := Node;
+        LoadRSSFeed(ChildData.FeedURL);
+        Inc(Count);
+        Application.ProcessMessages;
+      end;
+    end;
+  end;
+  
+var
+  RefreshCount: Integer;
+begin
+  NodeData := GetSelectedNodeData;
+  if not Assigned(NodeData) or not NodeData.IsFolder then
+    Exit;
+  
+  RefreshCount := 0;
+  RefreshFeedsInNode(FTreeView.Selected, RefreshCount);
+  
+  if RefreshCount > 0 then
+    ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds in folder.')
+  else
+    ShowMessage('No feeds found in folder.');
 end;
 
 procedure TFormMain.MenuRefreshAllClick(Sender: TObject);
