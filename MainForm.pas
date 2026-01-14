@@ -84,6 +84,7 @@ type
     procedure MenuAddFeedClick(Sender: TObject);
     procedure MenuDeleteClick(Sender: TObject);
     procedure MenuRefreshClick(Sender: TObject);
+    procedure MenuRefreshAllClick(Sender: TObject);
     procedure MenuMarkAllReadClick(Sender: TObject);
     procedure ListViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
 
@@ -321,6 +322,11 @@ begin
   MenuItem := TMenuItem.Create(FPopupMenu);
   MenuItem.Caption := 'Refresh Feed';
   MenuItem.OnClick := @MenuRefreshClick;
+  FPopupMenu.Items.Add(MenuItem);
+
+  MenuItem := TMenuItem.Create(FPopupMenu);
+  MenuItem.Caption := 'Refresh All Feeds';
+  MenuItem.OnClick := @MenuRefreshAllClick;
   FPopupMenu.Items.Add(MenuItem);
 
   MenuItem := TMenuItem.Create(FPopupMenu);
@@ -785,9 +791,14 @@ begin
   // Enable/disable menu items based on selection
   NodeData := GetSelectedNodeData;
 
-  // Refresh and Mark All Read only available for feeds, not folders
+  // Refresh Feed (index 3) - only available for feeds, not folders
   FPopupMenu.Items[3].Enabled := Assigned(NodeData) and not NodeData.IsFolder;
-  FPopupMenu.Items[4].Enabled := Assigned(NodeData) and not NodeData.IsFolder;
+  
+  // Refresh All Feeds (index 4) - always available
+  FPopupMenu.Items[4].Enabled := True;
+  
+  // Mark All Read (index 5) - available for both feeds and folders
+  FPopupMenu.Items[5].Enabled := Assigned(NodeData);
 end;
 
 procedure TFormMain.MenuAddFolderClick(Sender: TObject);
@@ -896,6 +907,45 @@ begin
     LoadRSSFeed(NodeData.FeedURL);
 end;
 
+procedure TFormMain.MenuRefreshAllClick(Sender: TObject);
+var
+  i: Integer;
+  Node: TTreeNode;
+  NodeData: TFeedNodeData;
+  RefreshCount: Integer;
+begin
+  if not Assigned(FTreeView) or (FTreeView.Items.Count = 0) then
+  begin
+    ShowMessage('No feeds to refresh.');
+    Exit;
+  end;
+
+  RefreshCount := 0;
+  
+  // Loop through all tree nodes and reload each feed
+  for i := 0 to FTreeView.Items.Count - 1 do
+  begin
+    Node := FTreeView.Items[i];
+    if Assigned(Node) and Assigned(Node.Data) then
+    begin
+      NodeData := TFeedNodeData(Node.Data);
+      if not NodeData.IsFolder then
+      begin
+        // Select this node and load its feed
+        FTreeView.Selected := Node;
+        LoadRSSFeed(NodeData.FeedURL);
+        Inc(RefreshCount);
+        Application.ProcessMessages; // Allow UI to update
+      end;
+    end;
+  end;
+  
+  if RefreshCount > 0 then
+    ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds.')
+  else
+    ShowMessage('No feeds to refresh.');
+end;
+
 procedure TFormMain.LoadFeedList;
 var
   Doc: TXMLDocument;
@@ -974,14 +1024,22 @@ var
   var
     ItemNode: TDOMElement;
     NodeData: TFeedNodeData;
+    NodeName: string;
+    ParenPos: Integer;
   begin
     while Assigned(TreeNode) do
     begin
       ItemNode := Doc.CreateElement('item');
       ParentXMLNode.AppendChild(ItemNode);
 
+      // Strip unread count from node name before saving
+      NodeName := TreeNode.Text;
+      ParenPos := Pos(' (', NodeName);
+      if ParenPos > 0 then
+        NodeName := Copy(NodeName, 1, ParenPos - 1);
+
       ItemNode.AppendChild(Doc.CreateElement('name'));
-      ItemNode.LastChild.AppendChild(Doc.CreateTextNode(TreeNode.Text));
+      ItemNode.LastChild.AppendChild(Doc.CreateTextNode(NodeName));
 
       NodeData := TFeedNodeData(TreeNode.Data);
       if Assigned(NodeData) then
@@ -1414,19 +1472,25 @@ end;
 function TFormMain.GetUnreadCount(const AFeedURL: string): Integer;
 var
   i: Integer;
+  CurrentNodeData: TFeedNodeData;
 begin
   Result := 0;
   
-  // Count unread items in the ListView
-  if not Assigned(FListView) then
-    Exit;
-    
-  // Count items with Data = Pointer(1) which marks unread items
-  for i := 0 to FListView.Items.Count - 1 do
+  // Only count if this feed is currently loaded in the ListView
+  if Assigned(FTreeView.Selected) and Assigned(FTreeView.Selected.Data) then
   begin
-    if FListView.Items[i].Data = Pointer(1) then
-      Inc(Result);
+    CurrentNodeData := TFeedNodeData(FTreeView.Selected.Data);
+    if Assigned(CurrentNodeData) and (CurrentNodeData.FeedURL = AFeedURL) then
+    begin
+      // Count unread items in the ListView
+      for i := 0 to FListView.Items.Count - 1 do
+      begin
+        if FListView.Items[i].Data = Pointer(1) then
+          Inc(Result);
+      end;
+    end;
   end;
+  // If feed is not loaded, return 0 (no count shown)
 end;
 
 procedure TFormMain.UpdateFeedNodeText(Node: TTreeNode);
@@ -1462,10 +1526,63 @@ end;
 procedure TFormMain.MenuMarkAllReadClick(Sender: TObject);
 var
   NodeData: TFeedNodeData;
+  
+  procedure MarkFeedsInNode(Node: TTreeNode);
+  var
+    ChildNode: TTreeNode;
+    ChildData: TFeedNodeData;
+    OldSelected: TTreeNode;
+  begin
+    if not Assigned(Node) then
+      Exit;
+      
+    if Assigned(Node.Data) then
+    begin
+      ChildData := TFeedNodeData(Node.Data);
+      
+      if ChildData.IsFolder then
+      begin
+        // Recursively process children
+        ChildNode := Node.GetFirstChild;
+        while Assigned(ChildNode) do
+        begin
+          MarkFeedsInNode(ChildNode);
+          ChildNode := ChildNode.GetNextSibling;
+        end;
+      end
+      else
+      begin
+        // It's a feed - mark all its items as read
+        // We need to load the feed first to mark items
+        OldSelected := FTreeView.Selected;
+        try
+          FTreeView.Selected := Node;
+          LoadRSSFeed(ChildData.FeedURL);
+          MarkAllItemsAsRead(ChildData.FeedURL);
+          Application.ProcessMessages;
+        finally
+          FTreeView.Selected := OldSelected;
+        end;
+      end;
+    end;
+  end;
+  
+var
+  MarkedCount: Integer;
 begin
   NodeData := GetSelectedNodeData;
-  if Assigned(NodeData) and not NodeData.IsFolder then
+  if not Assigned(NodeData) then
+    Exit;
+    
+  if NodeData.IsFolder then
   begin
+    // Mark all feeds in this folder and subfolders
+    MarkFeedsInNode(FTreeView.Selected);
+    ShowMessage('All items in folder marked as read.');
+  end
+  else
+  begin
+    // Single feed
     MarkAllItemsAsRead(NodeData.FeedURL);
     ShowMessage('All items marked as read.');
   end;
