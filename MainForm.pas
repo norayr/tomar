@@ -2,6 +2,9 @@ unit MainForm;
 
 {$mode objfpc}{$H+}
 
+{ Uncomment to enable developer/debug UI & logging }
+{.$DEFINE RSSREADER_DEBUG}
+
 interface
 
 uses
@@ -57,9 +60,13 @@ type
     FReadStatusDb: TDbf;
     FLoadingFeed: Boolean; // Flag to prevent selection during loading
     FInSelectItem: Boolean;
+{$IFDEF RSSREADER_DEBUG}
+    FDebugLog: TStringList;  // Debug log (optional)
+{$ENDIF}
 
     procedure CreateControls;
     procedure InitializeDatabase;
+    procedure DebugLog(const S: string);
     procedure TreeViewSelectionChanged(Sender: TObject);
     procedure ListViewSelectItem(Sender: TObject; Item: TListItem; Selected: Boolean);
     procedure ListViewCustomDrawItem(Sender: TCustomListView; Item: TListItem;
@@ -87,6 +94,7 @@ type
     procedure MenuRefreshFeedsClick(Sender: TObject);
     procedure MenuRefreshAllClick(Sender: TObject);
     procedure MenuMarkAllReadClick(Sender: TObject);
+    procedure MenuShowDebugLogClick(Sender: TObject);
     procedure ListViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
 
     procedure LoadFeedList;
@@ -120,6 +128,13 @@ uses
 
 const
   CONFIG_FILE = 'feeds.xml';
+
+
+function IsYouTubeFeedURL(const AFeedURL: string): Boolean;
+begin
+  Result := Pos('youtube.com/feeds/videos.xml', LowerCase(AFeedURL)) > 0;
+end;
+
 
 { TCustomHtmlDataProvider }
 
@@ -171,7 +186,17 @@ begin
     // This is a relative URL - skip it for now
     Exit;
   end;
-
+  
+  // Skip incomplete ytimg URLs (must have a file extension like .jpg)
+  {if (Pos('i.ytimg.com', ImageURL) > 0) and
+     (Pos('.jpg', LowerCase(ImageURL)) = 0) and
+     (Pos('.jpeg', LowerCase(ImageURL)) = 0) and
+     (Pos('.png', LowerCase(ImageURL)) = 0) and
+     (Pos('.webp', LowerCase(ImageURL)) = 0) then
+  begin
+    Exit;
+  end;
+   }
   Stream := TMemoryStream.Create;
   try
     try
@@ -231,6 +256,10 @@ begin
 
   FDataProvider := TCustomHtmlDataProvider.Create(Self);
   FLoadingFeed := False;
+  
+{$IFDEF RSSREADER_DEBUG}
+  FDebugLog := TStringList.Create;
+{$ENDIF}
 
   InitializeDatabase;
 
@@ -274,6 +303,10 @@ begin
       FReadStatusDb.Close;
     FReadStatusDb.Free;
   end;
+  
+{$IFDEF RSSREADER_DEBUG}
+  FreeAndNil(FDebugLog);
+{$ENDIF}
 
   FHttpClient.Free;
 end;
@@ -344,6 +377,17 @@ begin
   MenuItem.Caption := 'Delete';
   MenuItem.OnClick := @MenuDeleteClick;
   FPopupMenu.Items.Add(MenuItem);
+
+  MenuItem := TMenuItem.Create(FPopupMenu);
+  MenuItem.Caption := '-';
+  FPopupMenu.Items.Add(MenuItem);
+{$IFDEF RSSREADER_DEBUG}
+
+  MenuItem := TMenuItem.Create(FPopupMenu);
+  MenuItem.Caption := 'Show Debug Log';
+  MenuItem.OnClick := @MenuShowDebugLogClick;
+  FPopupMenu.Items.Add(MenuItem);
+{$ENDIF}
 
   FTreeView.PopupMenu.OnPopup := @TreeViewPopup;
 
@@ -561,10 +605,19 @@ begin
     begin
       Content := Item.SubItems[1];
 
-      // Check if this is a YouTube URL
-      if (Pos('youtube.com/watch?v=', Content) > 0) or
-         (Pos('youtu.be/', Content) > 0) or
-         (Pos('youtube.com/shorts/', Content) > 0) then
+      // Determine current feed URL (needed for YouTube special-casing)
+      NodeData := GetSelectedNodeData;
+      if Assigned(NodeData) and not NodeData.IsFolder then
+        FeedURL := NodeData.FeedURL
+      else
+        FeedURL := '';
+
+
+      // Check if this is a YouTube URL in a YouTube feed (avoid special-casing blog posts that just mention YouTube)
+      if IsYouTubeFeedURL(FeedURL) and (
+         (Pos('youtube.com/watch?v=', Content) > 0) or
+          (Pos('youtu.be/', Content) > 0) or
+          (Pos('youtube.com/shorts/', Content) > 0)) then
       begin
         // Extract video ID
         VideoId := '';
@@ -656,7 +709,9 @@ var
   NodeData: TFeedNodeData;
   ShouldMarkAsRead: Boolean;
 begin
+{$IFDEF RSSREADER_DEBUG}
   ShowMessage('entered listviewselectitem');
+{$ENDIF}
   // Only process when an item is SELECTED (not deselected)
   if not Selected or (Item = nil) then
     Exit;
@@ -692,10 +747,20 @@ begin
     begin
       Content := Item.SubItems[1];
 
-      // Check if this is a YouTube URL
-      if (Pos('youtube.com/watch?v=', Content) > 0) or
-         (Pos('youtu.be/', Content) > 0) or
-         (Pos('youtube.com/shorts/', Content) > 0) then
+      // Determine current feed URL (needed for YouTube special-casing)
+      NodeData := GetSelectedNodeData;
+      if Assigned(NodeData) and not NodeData.IsFolder then
+        FeedURL := NodeData.FeedURL
+      else
+        FeedURL := '';
+
+
+      // Check if this is a YouTube feed AND contains a YouTube URL
+      // Only create embeds for actual YouTube feeds, not blog posts that mention YouTube
+      if (Pos('youtube.com/feeds/videos.xml', FeedURL) > 0) and
+         ((Pos('youtube.com/watch?v=', Content) > 0) or
+          (Pos('youtu.be/', Content) > 0) or
+          (Pos('youtube.com/shorts/', Content) > 0)) then
       begin
         // Extract video ID
         VideoId := '';
@@ -1013,6 +1078,25 @@ var
   Doc: TXMLDocument;
   Root, ChildNode: TDOMNode;
 
+  function StripTrailingCount(const S: string): string;
+  var
+    i, j: Integer;
+  begin
+    Result := Trim(S);
+
+    // Remove a trailing unread count like "My Feed (23)"
+    i := Length(Result);
+    if (i < 4) or (Result[i] <> ')') then
+      Exit;
+
+    j := i - 1;
+    while (j > 0) and (Result[j] in ['0'..'9']) do
+      Dec(j);
+
+    if (j > 1) and (Result[j] = '(') and (Result[j - 1] = ' ') then
+      Result := Copy(Result, 1, j - 2);
+  end;
+
   procedure LoadNode(ParentTreeNode: TTreeNode; XMLNode: TDOMNode);
   var
     Child: TDOMNode;
@@ -1040,7 +1124,7 @@ var
             NodeType := ChildNode.TextContent;
           ChildNode := ChildNode.NextSibling;
         end;
-
+        Name := StripTrailingCount(Name);
         NodeData := TFeedNodeData.Create;
         NodeData.IsFolder := (NodeType = 'folder');
         NodeData.FeedURL := URL;
@@ -1150,6 +1234,13 @@ var
   IsYouTubeFeed: Boolean;
 begin
   //showmessage ('entered loadrssfeed');
+{$IFDEF RSSREADER_DEBUG}
+  FDebugLog.Clear;
+{$ENDIF}
+  DebugLog('=== Loading Feed ===');
+  DebugLog(Format('AURL parameter: "%s"', [AURL]));
+  DebugLog('');
+  
   FLoadingFeed := True; // Prevent selection events during loading
   FListView.Items.Clear;
   FHtmlPanel.SetHTMLFromStr('<html><body><p>Loading...</p></body></html>');
@@ -1327,6 +1418,12 @@ begin
         end;
 
         FLoadingFeed := False; // Re-enable selection events
+        
+        // Add debug summary
+        DebugLog('');
+        DebugLog('=== Load Complete ===');
+        DebugLog('Total items loaded: ' + IntToStr(FListView.Items.Count));
+        DebugLog('Unread items: ' + IntToStr(GetUnreadCount(AURL)));
 
       finally
         Doc.Free;
@@ -1379,8 +1476,6 @@ end;
 procedure TFormMain.InitializeDatabase;
 var
   DbPath: string;
-  NeedRecreate: Boolean;
-  i: Integer;
 begin
   // Create database directory if it doesn't exist
   DbPath := 'data' + DirectorySeparator;
@@ -1392,120 +1487,152 @@ begin
   FReadStatusDb.TableName := 'readstatus.dbf';
   FReadStatusDb.TableLevel := 7; // Visual dBase VII (supports ftAutoInc)
 
-  // Check if we need to recreate the table (old structure without ITEMHASH)
-  NeedRecreate := False;
-  if FileExists(DbPath + 'readstatus.dbf') then
-  begin
-    try
-      FReadStatusDb.Open;
-      // Check if ITEMHASH field exists
-      NeedRecreate := FReadStatusDb.FindField('ITEMHASH') = nil;
-      FReadStatusDb.Close;
-      
-      if NeedRecreate then
-      begin
-        // Delete old database files
-        DeleteFile(DbPath + 'readstatus.dbf');
-        DeleteFile(DbPath + 'readstatus.dbt');
-        DeleteFile(DbPath + 'readstatus.mdx');
-        // Delete any index files
-        for i := 0 to 9 do
-        begin
-          DeleteFile(DbPath + 'readstatus.cdx');
-          DeleteFile(DbPath + 'readstatus.ndx');
-          DeleteFile(DbPath + 'readstatus.id' + IntToStr(i));
-        end;
-      end;
-    except
-      // If there's an error opening, recreate anyway
-      NeedRecreate := True;
-    end;
-  end;
-
-  // Create table if it doesn't exist or needs recreation
+  // Create table if it doesn't exist
   if not FileExists(DbPath + 'readstatus.dbf') then
   begin
     with FReadStatusDb.FieldDefs do
     begin
+      Clear;  // Clear any existing definitions
       Add('ID', ftAutoInc, 0, False);
       Add('FEEDURL', ftString, 255, True);
       Add('ITEMLINK', ftString, 255, True);
-      Add('ITEMHASH', ftString, 32, True); // MD5 hash of FEEDURL+ITEMLINK for indexing
+      Add('ITEMHASH', ftString, 32, True); // MD5 hash of FEEDURL+ITEMLINK
       Add('ISREAD', ftBoolean, 0, True);
       Add('DATEREAD', ftDateTime, 0, False);
     end;
     FReadStatusDb.CreateTable;
-    
-    // Open with exclusive access to add index
-    FReadStatusDb.Exclusive := True;
-    FReadStatusDb.Open;
-    
-    // Add index only when creating the table
-    FReadStatusDb.AddIndex('idxItemHash', 'ITEMHASH', [ixUnique]);
-    
-    FReadStatusDb.Close;
-    FReadStatusDb.Exclusive := False;
+    // No index needed - sequential search is fast enough for hundreds of records
   end;
 
   // Open the database normally
   FReadStatusDb.Open;
-  
-  // Set the index as active for fast lookups
   try
-    FReadStatusDb.IndexName := 'idxItemHash';
-  except
-    // Ignore if index doesn't exist yet
+    FReadStatusDb.RegenerateIndexes; // Regenerate indices on startup
+  finally
+    // I dont know.
   end;
 end;
 
-function TFormMain.ComputeItemHash(const AFeedURL, AItemLink: string): string;
+procedure TFormMain.DebugLog(const S: string);
 begin
-  Result := MD5Print(MD5String(AFeedURL + AItemLink));
+{$IFDEF RSSREADER_DEBUG}
+  if Assigned(FDebugLog) then
+    FDebugLog.Add(S);
+{$ENDIF}
+end;
+
+function TFormMain.ComputeItemHash(const AFeedURL, AItemLink: string): string;
+var
+  Combined: string;
+begin
+  Combined := AFeedURL + AItemLink;
+  Result := MD5Print(MD5String(Combined));
+  // Only log on first call for each item to avoid spam
+  // DebugLog(Format('Hash("%s" + "%s") = %s', [AFeedURL, AItemLink, Result]));
 end;
 
 function TFormMain.IsItemRead(const AFeedURL, AItemLink: string): Boolean;
-var
-  ItemHash: string;
 begin
   Result := False;
   if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
+  begin
+    DebugLog('IsItemRead: Database not active for ' + AItemLink);
     Exit;
+  end;
 
   try
-    ItemHash := ComputeItemHash(AFeedURL, AItemLink);
-    
-    // Use Locate for indexed lookup
-    Result := FReadStatusDb.Locate('ITEMHASH', ItemHash, []);
+    // Sequential search (no index needed for small DB sizes)
+    FReadStatusDb.First;
+    while not FReadStatusDb.EOF do
+    begin
+      if (FReadStatusDb.FieldByName('FEEDURL').AsString = AFeedURL) and
+         (FReadStatusDb.FieldByName('ITEMLINK').AsString = AItemLink) then
+      begin
+        Result := True;
+        DebugLog('IsItemRead: FOUND');
+        Break;
+      end;
+      FReadStatusDb.Next;
+    end;
+
+    if not Result then
+      DebugLog('IsItemRead: NOT FOUND');
   except
-    Result := False;
+    on E: Exception do
+    begin
+      DebugLog('IsItemRead: ERROR - ' + E.Message + ' for ' + AItemLink);
+      Result := False;
+    end;
   end;
 end;
 
 procedure TFormMain.MarkItemAsRead(const AFeedURL, AItemLink: string);
 var
   ItemHash: string;
+  OldRecordCount, NewRecordCount: Integer;
+  OldState: TDataSetState;
 begin
   //showmessage ('entered markitemasread');
   if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
+  begin
+    DebugLog('ERROR: Database not active for: ' + AItemLink);
     Exit;
+  end;
 
   // Check if already marked as read
   if IsItemRead(AFeedURL, AItemLink) then
+  begin
+    DebugLog('SKIP: Already marked as read: ' + AItemLink);
     Exit;
+  end;
 
   try
     ItemHash := ComputeItemHash(AFeedURL, AItemLink);
+    OldRecordCount := FReadStatusDb.RecordCount;
     
+    DebugLog(Format('  Attempting to add: Hash=%s, RecordCount before=%d', [ItemHash, OldRecordCount]));
+    
+    // Try to append
     FReadStatusDb.Append;
+    OldState := FReadStatusDb.State;
+    DebugLog(Format('  After Append: State=%d (dsInsert=%d)', [Ord(OldState), Ord(dsInsert)]));
+    
+    // Set field values
     FReadStatusDb.FieldByName('FEEDURL').AsString := AFeedURL;
     FReadStatusDb.FieldByName('ITEMLINK').AsString := AItemLink;
     FReadStatusDb.FieldByName('ITEMHASH').AsString := ItemHash;
     FReadStatusDb.FieldByName('ISREAD').AsBoolean := True;
     FReadStatusDb.FieldByName('DATEREAD').AsDateTime := Now;
+    
+    DebugLog(Format('  Fields set. FEEDURL len=%d, ITEMLINK len=%d, ITEMHASH len=%d', 
+                         [Length(AFeedURL), Length(AItemLink), Length(ItemHash)]));
+    
+    // Try to post
     FReadStatusDb.Post;
+    // Ensure edits are flushed from dsInsert -> dsBrowse
+    FReadStatusDb.CheckBrowseMode;
+
+    // Verify insert by querying (RecordCount can be unreliable)
+    if not IsItemRead(AFeedURL, AItemLink) then
+      DebugLog('*** Insert failed: still not found: ' + AItemLink);
+
+    OldState := FReadStatusDb.State;
+    NewRecordCount := FReadStatusDb.RecordCount;
+    
+    DebugLog(Format('  After Post: State=%d (dsBrowse=%d), RecordCount=%d (was %d)', 
+                         [Ord(OldState), Ord(dsBrowse), NewRecordCount, OldRecordCount]));
+    
+    // RecordCount is not a reliable correctness check in DBF datasets; keep only as a hint
+    if NewRecordCount > OldRecordCount then
+      DebugLog('OK: Marked (RecordCount increased): ' + AItemLink)
+    else
+      DebugLog('NOTE: RecordCount did not increase (may be normal); rely on IsItemRead verification above');
   except
     on E: Exception do
-      ShowMessage('Error marking item as read: ' + E.Message);
+    begin
+      DebugLog('EXCEPTION during Post: ' + E.ClassName + ' - ' + E.Message);
+      ShowMessage('Error marking item as read: ' + AItemLink + #13#10 + E.Message);
+    end;
   end;
   //showmessage ('exiting markitemasread');
 end;
@@ -1515,17 +1642,37 @@ var
   i: Integer;
   ItemLink: string;
 begin
+{$IFDEF RSSREADER_DEBUG}
+  FDebugLog.Clear;
+{$ENDIF}
+  DebugLog('=== Mark All As Read Debug ===');
+  DebugLog(Format('Feed URL parameter: "%s"', [AFeedURL]));
+  DebugLog('Total items: ' + IntToStr(FListView.Items.Count));
+  DebugLog('');
+  
   // Mark all items in the current ListView as read
   for i := 0 to FListView.Items.Count - 1 do
   begin
     if FListView.Items[i].SubItems.Count > 2 then
     begin
       ItemLink := FListView.Items[i].SubItems[2];
+      DebugLog(Format('[%d] Link: %s', [i, ItemLink]));
       MarkItemAsRead(AFeedURL, ItemLink);
       FListView.Items[i].Data := nil; // Mark as read visually
+    end
+    else
+    begin
+      DebugLog(Format('[%d] SKIPPED: SubItems.Count=%d (need >2)', 
+                           [i, FListView.Items[i].SubItems.Count]));
     end;
   end;
-  
+
+  // Show debug log
+{$IFDEF RSSREADER_DEBUG}
+
+  ShowMessage(FDebugLog.Text);
+{$ENDIF}
+
   // Update the tree node text
   if Assigned(FTreeView.Selected) then
     UpdateFeedNodeText(FTreeView.Selected);
@@ -1648,6 +1795,18 @@ begin
     MarkAllItemsAsRead(NodeData.FeedURL);
     ShowMessage('All items marked as read.');
   end;
+end;
+
+procedure TFormMain.MenuShowDebugLogClick(Sender: TObject);
+begin
+{$IFDEF RSSREADER_DEBUG}
+  if FDebugLog.Count = 0 then
+    ShowMessage('Debug log is empty.')
+  else
+    ShowMessage(FDebugLog.Text);
+{$ELSE}
+  ShowMessage('Debug UI is disabled (compile with RSSREADER_DEBUG).');
+{$ENDIF}
 end;
 
 function TFormMain.ConvertYouTubeURLToFeed(const AUrl: string): string;
