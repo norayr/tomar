@@ -102,7 +102,7 @@ type
     procedure LoadRSSFeed(const AURL: string);
     function GetSelectedNodeData: TFeedNodeData;
     procedure FreeNodeData(Node: TTreeNode);
-    
+
     function ComputeItemHash(const AFeedURL, AItemLink: string): string;
     function IsItemRead(const AFeedURL, AItemLink: string): Boolean;
     procedure MarkItemAsRead(const AFeedURL, AItemLink: string);
@@ -127,8 +127,29 @@ uses
   //FeedDBCleanup;
 
 const
-  CONFIG_FILE = 'feeds.xml';
+  CONFIG_FILE_NAME = 'feeds.xml';
 
+
+
+
+function TomarBaseDir: string;
+begin
+  // ~/.tomar/
+  Result := IncludeTrailingPathDelimiter(GetUserDir) + '.tomar' + DirectorySeparator;
+  ForceDirectories(Result);
+end;
+
+function TomarDataDir: string;
+begin
+  // ~/.tomar/data/
+  Result := TomarBaseDir + 'data' + DirectorySeparator;
+  ForceDirectories(Result);
+end;
+
+function TomarConfigFile: string;
+begin
+  Result := TomarBaseDir + CONFIG_FILE_NAME;
+end;
 
 function IsYouTubeFeedURL(const AFeedURL: string): Boolean;
 begin
@@ -186,7 +207,7 @@ begin
     // This is a relative URL - skip it for now
     Exit;
   end;
-  
+
   // Skip incomplete ytimg URLs (must have a file extension like .jpg)
   {if (Pos('i.ytimg.com', ImageURL) > 0) and
      (Pos('.jpg', LowerCase(ImageURL)) = 0) and
@@ -256,7 +277,7 @@ begin
 
   FDataProvider := TCustomHtmlDataProvider.Create(Self);
   FLoadingFeed := False;
-  
+
 {$IFDEF RSSREADER_DEBUG}
   FDebugLog := TStringList.Create;
 {$ENDIF}
@@ -303,7 +324,7 @@ begin
       FReadStatusDb.Close;
     FReadStatusDb.Free;
   end;
-  
+
 {$IFDEF RSSREADER_DEBUG}
   FreeAndNil(FDebugLog);
 {$ENDIF}
@@ -575,7 +596,7 @@ begin
     FListView.Selected := Item;
     FListView.ItemFocused := Item;
 
-    // Don't mark as read while loading feed
+    // Do not mark as read while loading feed
     if not FLoadingFeed then
     begin
       // Only process if item is currently marked as unread
@@ -833,7 +854,7 @@ begin
   end;
 end;
 
-procedure TFormMain.ListViewCustomDrawItem(Sender: TCustomListView; 
+procedure TFormMain.ListViewCustomDrawItem(Sender: TCustomListView;
   Item: TListItem; State: TCustomDrawState; var DefaultDraw: Boolean);
 begin
   // Draw unread items in bold font
@@ -864,13 +885,13 @@ begin
 
   // Refresh Feed (index 3) - only available for feeds, not folders
   FPopupMenu.Items[3].Enabled := Assigned(NodeData) and not NodeData.IsFolder;
-  
+
   // Refresh Feeds (index 4) - only available for folders, not feeds
   FPopupMenu.Items[4].Enabled := Assigned(NodeData) and NodeData.IsFolder;
-  
+
   // Refresh All Feeds (index 5) - always available
   FPopupMenu.Items[5].Enabled := True;
-  
+
   // Mark All Read (index 6) - available for both feeds and folders
   FPopupMenu.Items[6].Enabled := Assigned(NodeData);
 end;
@@ -946,7 +967,7 @@ begin
   if MessageDlg('Delete', 'Delete "' + Node.Text + '"?',
                  mtConfirmation, [mbYes, mbNo], 0) = mrYes then
   begin
-    // If it's a feed (not folder), delete its database entries
+    // If it is a feed (not folder), delete its database entries
     NodeData := TFeedNodeData(Node.Data);
     if Assigned(NodeData) and not NodeData.IsFolder then
     begin
@@ -984,7 +1005,7 @@ end;
 procedure TFormMain.MenuRefreshFeedsClick(Sender: TObject);
 var
   NodeData: TFeedNodeData;
-  
+
   procedure RefreshFeedsInNode(Node: TTreeNode; var Count: Integer);
   var
     ChildNode: TTreeNode;
@@ -992,11 +1013,11 @@ var
   begin
     if not Assigned(Node) then
       Exit;
-      
+
     if Assigned(Node.Data) then
     begin
       ChildData := TFeedNodeData(Node.Data);
-      
+
       if ChildData.IsFolder then
       begin
         // Recursively process children
@@ -1009,7 +1030,7 @@ var
       end
       else
       begin
-        // It's a feed - refresh it
+        // It is a feed - refresh it
         FTreeView.Selected := Node;
         LoadRSSFeed(ChildData.FeedURL);
         Inc(Count);
@@ -1017,17 +1038,17 @@ var
       end;
     end;
   end;
-  
+
 var
   RefreshCount: Integer;
 begin
   NodeData := GetSelectedNodeData;
   if not Assigned(NodeData) or not NodeData.IsFolder then
     Exit;
-  
+
   RefreshCount := 0;
   RefreshFeedsInNode(FTreeView.Selected, RefreshCount);
-  
+
   if RefreshCount > 0 then
     ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds in folder.')
   else
@@ -1048,7 +1069,7 @@ begin
   end;
 
   RefreshCount := 0;
-  
+
   // Loop through all tree nodes and reload each feed
   for i := 0 to FTreeView.Items.Count - 1 do
   begin
@@ -1066,7 +1087,7 @@ begin
       end;
     end;
   end;
-  
+
   if RefreshCount > 0 then
     ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds.')
   else
@@ -1143,11 +1164,11 @@ var
   end;
 
 begin
-  if not FileExists(CONFIG_FILE) then
+  if not FileExists(TomarConfigFile) then
     Exit;
 
   try
-    ReadXMLFile(Doc, CONFIG_FILE);
+    ReadXMLFile(Doc, TomarConfigFile);
     try
       Root := Doc.DocumentElement;
       if Assigned(Root) then
@@ -1217,7 +1238,7 @@ begin
     if FTreeView.Items.Count > 0 then
       SaveNode(Root, FTreeView.Items.GetFirstNode);
 
-    WriteXMLFile(Doc, CONFIG_FILE);
+    WriteXMLFile(Doc, TomarConfigFile);
   finally
     Doc.Free;
   end;
@@ -1240,7 +1261,7 @@ begin
   DebugLog('=== Loading Feed ===');
   DebugLog(Format('AURL parameter: "%s"', [AURL]));
   DebugLog('');
-  
+
   FLoadingFeed := True; // Prevent selection events during loading
   FListView.Items.Clear;
   FHtmlPanel.SetHTMLFromStr('<html><body><p>Loading...</p></body></html>');
@@ -1317,7 +1338,7 @@ begin
             else
               ListItem.SubItems.Add(Description);
             ListItem.SubItems.Add(Link);
-            
+
             // Mark unread items with bold font
             if not IsItemRead(AURL, Link) then
             begin
@@ -1379,7 +1400,7 @@ begin
             else
               ListItem.SubItems.Add(Description);
             ListItem.SubItems.Add(Link);
-            
+
             // Mark unread items with bold font
             if not IsItemRead(AURL, Link) then
             begin
@@ -1418,7 +1439,7 @@ begin
         end;
 
         FLoadingFeed := False; // Re-enable selection events
-        
+
         // Add debug summary
         DebugLog('');
         DebugLog('=== Load Complete ===');
@@ -1478,7 +1499,7 @@ var
   DbPath: string;
 begin
   // Create database directory if it doesn't exist
-  DbPath := 'data' + DirectorySeparator;
+  DbPath := TomarDataDir;
   if not DirectoryExists(DbPath) then
     CreateDir(DbPath);
 
@@ -1589,24 +1610,24 @@ begin
   try
     ItemHash := ComputeItemHash(AFeedURL, AItemLink);
     OldRecordCount := FReadStatusDb.RecordCount;
-    
+
     DebugLog(Format('  Attempting to add: Hash=%s, RecordCount before=%d', [ItemHash, OldRecordCount]));
-    
+
     // Try to append
     FReadStatusDb.Append;
     OldState := FReadStatusDb.State;
     DebugLog(Format('  After Append: State=%d (dsInsert=%d)', [Ord(OldState), Ord(dsInsert)]));
-    
+
     // Set field values
     FReadStatusDb.FieldByName('FEEDURL').AsString := AFeedURL;
     FReadStatusDb.FieldByName('ITEMLINK').AsString := AItemLink;
     FReadStatusDb.FieldByName('ITEMHASH').AsString := ItemHash;
     FReadStatusDb.FieldByName('ISREAD').AsBoolean := True;
     FReadStatusDb.FieldByName('DATEREAD').AsDateTime := Now;
-    
-    DebugLog(Format('  Fields set. FEEDURL len=%d, ITEMLINK len=%d, ITEMHASH len=%d', 
+
+    DebugLog(Format('  Fields set. FEEDURL len=%d, ITEMLINK len=%d, ITEMHASH len=%d',
                          [Length(AFeedURL), Length(AItemLink), Length(ItemHash)]));
-    
+
     // Try to post
     FReadStatusDb.Post;
     // Ensure edits are flushed from dsInsert -> dsBrowse
@@ -1618,10 +1639,10 @@ begin
 
     OldState := FReadStatusDb.State;
     NewRecordCount := FReadStatusDb.RecordCount;
-    
-    DebugLog(Format('  After Post: State=%d (dsBrowse=%d), RecordCount=%d (was %d)', 
+
+    DebugLog(Format('  After Post: State=%d (dsBrowse=%d), RecordCount=%d (was %d)',
                          [Ord(OldState), Ord(dsBrowse), NewRecordCount, OldRecordCount]));
-    
+
     // RecordCount is not a reliable correctness check in DBF datasets; keep only as a hint
     if NewRecordCount > OldRecordCount then
       DebugLog('OK: Marked (RecordCount increased): ' + AItemLink)
@@ -1649,7 +1670,7 @@ begin
   DebugLog(Format('Feed URL parameter: "%s"', [AFeedURL]));
   DebugLog('Total items: ' + IntToStr(FListView.Items.Count));
   DebugLog('');
-  
+
   // Mark all items in the current ListView as read
   for i := 0 to FListView.Items.Count - 1 do
   begin
@@ -1662,7 +1683,7 @@ begin
     end
     else
     begin
-      DebugLog(Format('[%d] SKIPPED: SubItems.Count=%d (need >2)', 
+      DebugLog(Format('[%d] SKIPPED: SubItems.Count=%d (need >2)',
                            [i, FListView.Items[i].SubItems.Count]));
     end;
   end;
@@ -1684,7 +1705,7 @@ var
   CurrentNodeData: TFeedNodeData;
 begin
   Result := 0;
-  
+
   // Only count if this feed is currently loaded in the ListView
   if Assigned(FTreeView.Selected) and Assigned(FTreeView.Selected.Data) then
   begin
@@ -1716,12 +1737,12 @@ begin
     Exit;
 
   UnreadCount := GetUnreadCount(NodeData.FeedURL);
-  
+
   // Get base name without unread count
   BaseText := Node.Text;
   if Pos(' (', BaseText) > 0 then
     BaseText := Copy(BaseText, 1, Pos(' (', BaseText) - 1);
-  
+
   // Update node text with unread count
   if UnreadCount > 0 then
     Node.Text := BaseText + ' (' + IntToStr(UnreadCount) + ')'
@@ -1735,7 +1756,7 @@ end;
 procedure TFormMain.MenuMarkAllReadClick(Sender: TObject);
 var
   NodeData: TFeedNodeData;
-  
+
   procedure MarkFeedsInNode(Node: TTreeNode);
   var
     ChildNode: TTreeNode;
@@ -1744,11 +1765,11 @@ var
   begin
     if not Assigned(Node) then
       Exit;
-      
+
     if Assigned(Node.Data) then
     begin
       ChildData := TFeedNodeData(Node.Data);
-      
+
       if ChildData.IsFolder then
       begin
         // Recursively process children
@@ -1761,7 +1782,7 @@ var
       end
       else
       begin
-        // It's a feed - mark all its items as read
+        // It is a feed - mark all its items as read
         // We need to load the feed first to mark items
         OldSelected := FTreeView.Selected;
         try
@@ -1775,14 +1796,14 @@ var
       end;
     end;
   end;
-  
+
 var
   MarkedCount: Integer;
 begin
   NodeData := GetSelectedNodeData;
   if not Assigned(NodeData) then
     Exit;
-    
+
   if NodeData.IsFolder then
   begin
     // Mark all feeds in this folder and subfolders
