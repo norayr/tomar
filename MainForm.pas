@@ -134,7 +134,7 @@ const
 
 function TomarBaseDir: string;
 begin
-  // ~/.tomar/
+  // ~/.tomar/  directory
   Result := IncludeTrailingPathDelimiter(GetUserDir) + '.tomar' + DirectorySeparator;
   ForceDirectories(Result);
 end;
@@ -1789,7 +1789,7 @@ var
           FTreeView.Selected := Node;
           LoadRSSFeed(ChildData.FeedURL);
           MarkAllItemsAsRead(ChildData.FeedURL);
-          Application.ProcessMessages;
+          //Application.ProcessMessages;
         finally
           FTreeView.Selected := OldSelected;
         end;
