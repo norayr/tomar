@@ -58,6 +58,7 @@ type
     FHttpClient: TFPHTTPClient;
     FDataProvider: TCustomHtmlDataProvider;
     FReadStatusDb: TDbf;
+    FFeedItemsDb: TDbf;
     FLoadingFeed: Boolean; // Flag to prevent selection during loading
     FInSelectItem: Boolean;
 {$IFDEF RSSREADER_DEBUG}
@@ -100,15 +101,24 @@ type
     procedure LoadFeedList;
     procedure SaveFeedList;
     procedure LoadRSSFeed(const AURL: string);
+    procedure LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean);
+    procedure MarkFeedItemsAsNotSeen(const AURL: string);
+    procedure SaveOrUpdateFeedItem(const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string);
+    function MakeItemKey(const AGuid, AId, ALink, ATitle, APubDate: string): string;
     function GetSelectedNodeData: TFeedNodeData;
     procedure FreeNodeData(Node: TTreeNode);
 
-    function ComputeItemHash(const AFeedURL, AItemLink: string): string;
-    function IsItemRead(const AFeedURL, AItemLink: string): Boolean;
-    procedure MarkItemAsRead(const AFeedURL, AItemLink: string);
+    function ComputeItemHash(const AFeedURL, AItemKey: string): string;
+    function IsItemRead(const AFeedURL, AItemKey: string; const ALegacyLink: string = ''): Boolean;
+    procedure MarkItemAsRead(const AFeedURL, AItemKey: string; const ALegacyLink: string = '');
     procedure MarkAllItemsAsRead(const AFeedURL: string);
     function GetUnreadCount(const AFeedURL: string): Integer;
     procedure UpdateFeedNodeText(Node: TTreeNode);
+    procedure UpdateAllFeedNodeTexts;
+    function BuildReadKeyCache: TStringList;
+    function FindCountIndex(ACounts: TStringList; const AFeedURL: string): Integer;
+    function GetCountValue(ACounts: TStringList; const AFeedURL: string): Integer;
+    procedure IncrementCountValue(ACounts: TStringList; const AFeedURL: string);
 
     function ConvertYouTubeURLToFeed(const AUrl: string): string;
   public
@@ -297,6 +307,7 @@ begin
   // end of test cleanup
   CreateControls;
   LoadFeedList;
+  UpdateAllFeedNodeTexts;
 end;
 
 procedure TFormMain.FormDestroy(Sender: TObject);
@@ -325,6 +336,13 @@ begin
     FReadStatusDb.Free;
   end;
 
+  if Assigned(FFeedItemsDb) then
+  begin
+    if FFeedItemsDb.Active then
+      FFeedItemsDb.Close;
+    FFeedItemsDb.Free;
+  end;
+
 {$IFDEF RSSREADER_DEBUG}
   FreeAndNil(FDebugLog);
 {$ENDIF}
@@ -344,6 +362,7 @@ begin
   LeftPanel.Width := 250;
   LeftPanel.Caption := '';
   LeftPanel.BevelOuter := bvNone;
+  LeftPanel.Constraints.MinWidth := 120;
 
   FTreeView := TTreeView.Create(Self);
   FTreeView.Parent := LeftPanel;
@@ -416,7 +435,13 @@ begin
   FSplitter1 := TSplitter.Create(Self);
   FSplitter1.Parent := Self;
   FSplitter1.Align := alLeft;
-  FSplitter1.Width := 5;
+  FSplitter1.Width := 8;
+  FSplitter1.ResizeStyle := rsUpdate;
+  FSplitter1.AutoSnap := False;
+  FSplitter1.MinSize := 120;
+  FSplitter1.Beveled := True;
+  FSplitter1.Cursor := crHSplit;
+  FSplitter1.Color := clMedGray;
 
   // Right Panel
   RightPanel := TPanel.Create(Self);
@@ -432,6 +457,7 @@ begin
   TopPanel.Height := 250;
   TopPanel.Caption := '';
   TopPanel.BevelOuter := bvNone;
+  TopPanel.Constraints.MinHeight := 120;
 
   FListView := TListView.Create(Self);
   FListView.Parent := TopPanel;
@@ -466,7 +492,13 @@ begin
   FSplitter2 := TSplitter.Create(Self);
   FSplitter2.Parent := RightPanel;
   FSplitter2.Align := alTop;
-  FSplitter2.Height := 5;
+  FSplitter2.Height := 8;
+  FSplitter2.ResizeStyle := rsUpdate;
+  FSplitter2.AutoSnap := False;
+  FSplitter2.MinSize := 120;
+  FSplitter2.Beveled := True;
+  FSplitter2.Cursor := crVSplit;
+  FSplitter2.Color := clMedGray;
 
   // Bottom panel with HTML viewer
   BottomPanel := TPanel.Create(Self);
@@ -474,6 +506,7 @@ begin
   BottomPanel.Align := alClient;
   BottomPanel.Caption := '';
   BottomPanel.BevelOuter := bvNone;
+  BottomPanel.Constraints.MinHeight := 120;
 
   FHtmlPanel := TIpHtmlPanel.Create(Self);
   FHtmlPanel.Parent := BottomPanel;
@@ -575,7 +608,7 @@ var
   VideoId: string;
   HtmlContent: string;
   PosStart, PosEnd: Integer;
-  FeedURL, ItemLink: string;
+  FeedURL, ItemLink, ItemKey: string;
   NodeData: TFeedNodeData;
 begin
   // Only handle left mouse button
@@ -610,7 +643,11 @@ begin
           if Item.SubItems.Count > 2 then
           begin
             ItemLink := Item.SubItems[2]; // The link is in SubItems[2]
-            MarkItemAsRead(FeedURL, ItemLink);
+            if Item.SubItems.Count > 3 then
+              ItemKey := Item.SubItems[3]
+            else
+              ItemKey := ItemLink;
+            MarkItemAsRead(FeedURL, ItemKey, ItemLink);
             Item.Data := nil; // Mark as read in ListView
               FListView.Invalidate;
               FListView.Update;
@@ -726,7 +763,7 @@ var
   VideoId: string;
   HtmlContent: string;
   PosStart, PosEnd: Integer;
-  FeedURL, ItemLink: string;
+  FeedURL, ItemLink, ItemKey: string;
   NodeData: TFeedNodeData;
   ShouldMarkAsRead: Boolean;
 begin
@@ -757,6 +794,10 @@ begin
           if Item.SubItems.Count > 2 then
           begin
             ItemLink := Item.SubItems[2]; // The link is in SubItems[2]
+            if Item.SubItems.Count > 3 then
+              ItemKey := Item.SubItems[3]
+            else
+              ItemKey := ItemLink;
             ShouldMarkAsRead := True;
           end;
         end;
@@ -843,7 +884,7 @@ begin
     // NOW mark the item as read and update the count
     if ShouldMarkAsRead then
     begin
-      MarkItemAsRead(FeedURL, ItemLink);
+      MarkItemAsRead(FeedURL, ItemKey, ItemLink);
       Item.Data := nil; // Mark as read in ListView
       // Update tree node text
       UpdateFeedNodeText(FTreeView.Selected);
@@ -1249,12 +1290,10 @@ var
   Response: string;
   Doc: TXMLDocument;
   ItemNode, ChildNode: TDOMNode;
-  Title, Link, Description, PubDate, VideoId: string;
-  ListItem: TListItem;
+  Title, Link, Description, PubDate, VideoId, GuidText, IdText, ItemKey: string;
   Stream: TStringStream;
   IsYouTubeFeed: Boolean;
 begin
-  //showmessage ('entered loadrssfeed');
 {$IFDEF RSSREADER_DEBUG}
   FDebugLog.Clear;
 {$ENDIF}
@@ -1262,13 +1301,12 @@ begin
   DebugLog(Format('AURL parameter: "%s"', [AURL]));
   DebugLog('');
 
-  FLoadingFeed := True; // Prevent selection events during loading
+  FLoadingFeed := True;
   FListView.Items.Clear;
   FHtmlPanel.SetHTMLFromStr('<html><body><p>Loading...</p></body></html>');
   Application.ProcessMessages;
 
   try
-    //Response := FHttpClient.Get(AURL);
     try
       Response := FHttpClient.Get(AURL);
     except
@@ -1280,29 +1318,27 @@ begin
                     'Error: ' + E.Message);
         FHtmlPanel.SetHTMLFromStr('<html><body><p style="color:red;">Connection failed: ' +
                                   E.Message + '</p></body></html>');
-        Exit; // Exit the procedure
+        Exit;
       end;
     end;
-
 
     Stream := TStringStream.Create(Response);
     try
       ReadXMLFile(Doc, Stream);
       try
-        // Check if this is a YouTube feed
         IsYouTubeFeed := False;
         if Assigned(Doc.DocumentElement) then
         begin
-          // Check for YouTube namespace or yt:channelId
           if (Doc.DocumentElement.FindNode('yt:channelId') <> nil) or
              (Pos('youtube.com', AURL) > 0) then
             IsYouTubeFeed := True;
         end;
 
-        // Try RSS format first
+        MarkFeedItemsAsNotSeen(AURL);
+
         ItemNode := Doc.DocumentElement.FindNode('channel');
         if not Assigned(ItemNode) then
-          ItemNode := Doc.DocumentElement; // Might be Atom
+          ItemNode := Doc.DocumentElement;
 
         ItemNode := ItemNode.FirstChild;
         while Assigned(ItemNode) do
@@ -1313,6 +1349,8 @@ begin
             Link := '';
             Description := '';
             PubDate := '';
+            GuidText := '';
+            IdText := '';
 
             ChildNode := ItemNode.FirstChild;
             while Assigned(ChildNode) do
@@ -1325,37 +1363,29 @@ begin
                       (ChildNode.NodeName = 'content:encoded') then
                 Description := ChildNode.TextContent
               else if ChildNode.NodeName = 'pubDate' then
-                PubDate := ChildNode.TextContent;
+                PubDate := ChildNode.TextContent
+              else if ChildNode.NodeName = 'guid' then
+                GuidText := ChildNode.TextContent;
 
               ChildNode := ChildNode.NextSibling;
             end;
 
-            ListItem := FListView.Items.Add;
-            ListItem.Caption := Title;
-            ListItem.SubItems.Add(PubDate);
-            if IsYouTubeFeed then
-              ListItem.SubItems.Add(Link)  // For YouTube, only show the video URL
-            else
-              ListItem.SubItems.Add(Description);
-            ListItem.SubItems.Add(Link);
+            ItemKey := MakeItemKey(GuidText, IdText, Link, Title, PubDate);
 
-            // Mark unread items with bold font
-            if not IsItemRead(AURL, Link) then
-            begin
-              ListItem.Data := Pointer(1); // Mark as unread
-            end
+            if IsYouTubeFeed then
+              SaveOrUpdateFeedItem(AURL, ItemKey, Title, PubDate, Link, Link)
             else
-            begin
-              ListItem.Data := nil; // Mark as read
-            end;
+              SaveOrUpdateFeedItem(AURL, ItemKey, Title, PubDate, Description, Link);
           end
-          else if ItemNode.NodeName = 'entry' then // Atom format
+          else if ItemNode.NodeName = 'entry' then
           begin
             Title := '';
             Link := '';
             Description := '';
             PubDate := '';
             VideoId := '';
+            GuidText := '';
+            IdText := '';
 
             ChildNode := ItemNode.FirstChild;
             while Assigned(ChildNode) do
@@ -1364,8 +1394,7 @@ begin
                 Title := ChildNode.TextContent
               else if ChildNode.NodeName = 'link' then
               begin
-                // For YouTube, prefer link with rel="alternate"
-                if ChildNode.Attributes.GetNamedItem('rel') <> nil then
+                if Assigned(ChildNode.Attributes) and (ChildNode.Attributes.GetNamedItem('rel') <> nil) then
                 begin
                   if ChildNode.Attributes.GetNamedItem('rel').NodeValue = 'alternate' then
                   begin
@@ -1373,7 +1402,7 @@ begin
                       Link := ChildNode.Attributes.GetNamedItem('href').NodeValue;
                   end;
                 end
-                else if ChildNode.Attributes.GetNamedItem('href') <> nil then
+                else if Assigned(ChildNode.Attributes) and (ChildNode.Attributes.GetNamedItem('href') <> nil) then
                   Link := ChildNode.Attributes.GetNamedItem('href').NodeValue;
               end
               else if ChildNode.NodeName = 'yt:videoId' then
@@ -1383,67 +1412,41 @@ begin
                 Description := ChildNode.TextContent
               else if (ChildNode.NodeName = 'published') or
                       (ChildNode.NodeName = 'updated') then
-                PubDate := ChildNode.TextContent;
+                PubDate := ChildNode.TextContent
+              else if ChildNode.NodeName = 'id' then
+                IdText := ChildNode.TextContent;
 
               ChildNode := ChildNode.NextSibling;
             end;
 
-            // If we have videoId but no link, construct YouTube URL
             if IsYouTubeFeed and (Link = '') and (VideoId <> '') then
               Link := 'https://www.youtube.com/watch?v=' + VideoId;
 
-            ListItem := FListView.Items.Add;
-            ListItem.Caption := Title;
-            ListItem.SubItems.Add(PubDate);
-            if IsYouTubeFeed then
-              ListItem.SubItems.Add(Link)  // For YouTube, only show the video URL
-            else
-              ListItem.SubItems.Add(Description);
-            ListItem.SubItems.Add(Link);
+            ItemKey := MakeItemKey(GuidText, IdText, Link, Title, PubDate);
 
-            // Mark unread items with bold font
-            if not IsItemRead(AURL, Link) then
-            begin
-              ListItem.Data := Pointer(1); // Mark as unread
-            end
+            if IsYouTubeFeed then
+              SaveOrUpdateFeedItem(AURL, ItemKey, Title, PubDate, Link, Link)
             else
-            begin
-              ListItem.Data := nil; // Mark as read
-            end;
+              SaveOrUpdateFeedItem(AURL, ItemKey, Title, PubDate, Description, Link);
           end;
 
           ItemNode := ItemNode.NextSibling;
         end;
 
+        LoadFeedItemsFromDb(AURL, IsYouTubeFeed);
+
         if FListView.Items.Count = 0 then
           FHtmlPanel.SetHTMLFromStr('<html><body><p>No items found in feed.</p></body></html>')
         else
-        begin
           FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an item to view its content.</p></body></html>');
-          // Update tree node text with unread count
-          if Assigned(FTreeView.Selected) then
-            UpdateFeedNodeText(FTreeView.Selected);
-        end;
 
-        // Prevent auto-selection from marking first item as read later
-        if Assigned(FListView) then
-        begin
-          FListView.Selected := nil;
-          FListView.ItemFocused := nil;
-          FListView.ItemIndex := -1;
-          // Also clear any internal selection state by calling ClearSelection
-          FListView.ClearSelection;
+        UpdateAllFeedNodeTexts;
 
-          // Force a repaint to ensure visual state is cleared
-          FListView.Invalidate;
-        end;
+        FLoadingFeed := False;
 
-        FLoadingFeed := False; // Re-enable selection events
-
-        // Add debug summary
         DebugLog('');
         DebugLog('=== Load Complete ===');
-        DebugLog('Total items loaded: ' + IntToStr(FListView.Items.Count));
+        DebugLog('Total items loaded from DB: ' + IntToStr(FListView.Items.Count));
         DebugLog('Unread items: ' + IntToStr(GetUnreadCount(AURL)));
 
       finally
@@ -1455,13 +1458,132 @@ begin
   except
     on E: Exception do
     begin
-      FLoadingFeed := False; // Re-enable selection events
+      FLoadingFeed := False;
       ShowMessage('Error loading feed: ' + E.Message);
       FHtmlPanel.SetHTMLFromStr('<html><body><p style="color:red;">Error loading feed: ' +
                                 E.Message + '</p></body></html>');
     end;
   end;
-  //showmessage ('exiting loadrssfeed');
+end;
+
+procedure TFormMain.LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean);
+var
+  ListItem: TListItem;
+  ContentValue, LinkValue, ItemKeyValue: string;
+begin
+  FListView.Items.BeginUpdate;
+  try
+    FListView.Items.Clear;
+
+    if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
+      Exit;
+
+    if FFeedItemsDb.RecordCount = 0 then
+      Exit;
+
+    FFeedItemsDb.First;
+    while not FFeedItemsDb.EOF do
+    begin
+      if FFeedItemsDb.FieldByName('FEEDURL').AsString = AURL then
+      begin
+        ListItem := FListView.Items.Add;
+        ListItem.Caption := FFeedItemsDb.FieldByName('TITLE').AsString;
+        ListItem.SubItems.Add(FFeedItemsDb.FieldByName('PUBDATE').AsString);
+
+        ContentValue := FFeedItemsDb.FieldByName('CONTENT').AsString;
+        LinkValue := FFeedItemsDb.FieldByName('LINK').AsString;
+        ItemKeyValue := FFeedItemsDb.FieldByName('ITEMKEY').AsString;
+
+        if IsYouTubeFeed then
+          ListItem.SubItems.Add(LinkValue)
+        else
+          ListItem.SubItems.Add(ContentValue);
+
+        ListItem.SubItems.Add(LinkValue);
+        ListItem.SubItems.Add(ItemKeyValue);
+
+        if not IsItemRead(AURL, ItemKeyValue, LinkValue) then
+          ListItem.Data := Pointer(1)
+        else
+          ListItem.Data := nil;
+      end;
+
+      FFeedItemsDb.Next;
+    end;
+  finally
+    FListView.Items.EndUpdate;
+  end;
+end;
+
+procedure TFormMain.MarkFeedItemsAsNotSeen(const AURL: string);
+begin
+  if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
+    Exit;
+
+  FFeedItemsDb.First;
+  while not FFeedItemsDb.EOF do
+  begin
+    if FFeedItemsDb.FieldByName('FEEDURL').AsString = AURL then
+    begin
+      FFeedItemsDb.Edit;
+      FFeedItemsDb.FieldByName('INLASTFETCH').AsBoolean := False;
+      FFeedItemsDb.Post;
+    end;
+    FFeedItemsDb.Next;
+  end;
+end;
+
+procedure TFormMain.SaveOrUpdateFeedItem(const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string);
+var
+  Found: Boolean;
+begin
+  if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
+    Exit;
+
+  Found := False;
+  FFeedItemsDb.First;
+  while not FFeedItemsDb.EOF do
+  begin
+    if (FFeedItemsDb.FieldByName('FEEDURL').AsString = AFeedURL) and
+       (FFeedItemsDb.FieldByName('ITEMKEY').AsString = AItemKey) then
+    begin
+      Found := True;
+      Break;
+    end;
+    FFeedItemsDb.Next;
+  end;
+
+  if Found then
+    FFeedItemsDb.Edit
+  else
+  begin
+    FFeedItemsDb.Append;
+    FFeedItemsDb.FieldByName('FEEDURL').AsString := AFeedURL;
+    FFeedItemsDb.FieldByName('ITEMKEY').AsString := AItemKey;
+    FFeedItemsDb.FieldByName('FIRSTSEEN').AsDateTime := Now;
+  end;
+
+  FFeedItemsDb.FieldByName('TITLE').AsString := Copy(ATitle, 1, 255);
+  FFeedItemsDb.FieldByName('PUBDATE').AsString := Copy(APubDate, 1, 127);
+  FFeedItemsDb.FieldByName('CONTENT').AsString := AContent;
+  FFeedItemsDb.FieldByName('LINK').AsString := Copy(ALink, 1, 255);
+  FFeedItemsDb.FieldByName('LASTSEEN').AsDateTime := Now;
+  FFeedItemsDb.FieldByName('INLASTFETCH').AsBoolean := True;
+  FFeedItemsDb.Post;
+end;
+
+function TFormMain.MakeItemKey(const AGuid, AId, ALink, ATitle, APubDate: string): string;
+begin
+  if Trim(AGuid) <> '' then
+    Exit(Copy(Trim(AGuid), 1, 255));
+
+  if Trim(AId) <> '' then
+    Exit(Copy(Trim(AId), 1, 255));
+
+  if Trim(ALink) <> '' then
+    Exit(Copy(Trim(ALink), 1, 255));
+
+  Result := Copy(Trim(ATitle) + '|' + Trim(APubDate), 1, 255);
 end;
 
 function TFormMain.GetSelectedNodeData: TFeedNodeData;
@@ -1498,7 +1620,6 @@ procedure TFormMain.InitializeDatabase;
 var
   DbPath: string;
 begin
-  // Create database directory if it doesn't exist
   DbPath := TomarDataDir;
   if not DirectoryExists(DbPath) then
     CreateDir(DbPath);
@@ -1506,32 +1627,54 @@ begin
   FReadStatusDb := TDbf.Create(nil);
   FReadStatusDb.FilePathFull := DbPath;
   FReadStatusDb.TableName := 'readstatus.dbf';
-  FReadStatusDb.TableLevel := 7; // Visual dBase VII (supports ftAutoInc)
+  FReadStatusDb.TableLevel := 7;
 
-  // Create table if it doesn't exist
   if not FileExists(DbPath + 'readstatus.dbf') then
   begin
     with FReadStatusDb.FieldDefs do
     begin
-      Clear;  // Clear any existing definitions
+      Clear;
       Add('ID', ftAutoInc, 0, False);
       Add('FEEDURL', ftString, 255, True);
       Add('ITEMLINK', ftString, 255, True);
-      Add('ITEMHASH', ftString, 32, True); // MD5 hash of FEEDURL+ITEMLINK
+      Add('ITEMHASH', ftString, 32, True);
       Add('ISREAD', ftBoolean, 0, True);
       Add('DATEREAD', ftDateTime, 0, False);
     end;
     FReadStatusDb.CreateTable;
-    // No index needed - sequential search is fast enough for hundreds of records
   end;
 
-  // Open the database normally
   FReadStatusDb.Open;
   try
-    FReadStatusDb.RegenerateIndexes; // Regenerate indices on startup
+    FReadStatusDb.RegenerateIndexes;
   finally
-    // I dont know.
   end;
+
+  FFeedItemsDb := TDbf.Create(nil);
+  FFeedItemsDb.FilePathFull := DbPath;
+  FFeedItemsDb.TableName := 'feeditems.dbf';
+  FFeedItemsDb.TableLevel := 7;
+
+  if not FileExists(DbPath + 'feeditems.dbf') then
+  begin
+    with FFeedItemsDb.FieldDefs do
+    begin
+      Clear;
+      Add('ID', ftAutoInc, 0, False);
+      Add('FEEDURL', ftString, 255, True);
+      Add('ITEMKEY', ftString, 255, True);
+      Add('TITLE', ftString, 255, False);
+      Add('PUBDATE', ftString, 127, False);
+      Add('CONTENT', ftMemo, 0, False);
+      Add('LINK', ftString, 255, False);
+      Add('FIRSTSEEN', ftDateTime, 0, False);
+      Add('LASTSEEN', ftDateTime, 0, False);
+      Add('INLASTFETCH', ftBoolean, 0, False);
+    end;
+    FFeedItemsDb.CreateTable;
+  end;
+
+  FFeedItemsDb.Open;
 end;
 
 procedure TFormMain.DebugLog(const S: string);
@@ -1542,32 +1685,32 @@ begin
 {$ENDIF}
 end;
 
-function TFormMain.ComputeItemHash(const AFeedURL, AItemLink: string): string;
+function TFormMain.ComputeItemHash(const AFeedURL, AItemKey: string): string;
 var
   Combined: string;
 begin
-  Combined := AFeedURL + AItemLink;
+  Combined := AFeedURL + AItemKey;
   Result := MD5Print(MD5String(Combined));
-  // Only log on first call for each item to avoid spam
-  // DebugLog(Format('Hash("%s" + "%s") = %s', [AFeedURL, AItemLink, Result]));
 end;
 
-function TFormMain.IsItemRead(const AFeedURL, AItemLink: string): Boolean;
+function TFormMain.IsItemRead(const AFeedURL, AItemKey: string; const ALegacyLink: string = ''): Boolean;
+var
+  StoredKey: string;
 begin
   Result := False;
   if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
   begin
-    DebugLog('IsItemRead: Database not active for ' + AItemLink);
+    DebugLog('IsItemRead: Database not active for ' + AItemKey);
     Exit;
   end;
 
   try
-    // Sequential search (no index needed for small DB sizes)
     FReadStatusDb.First;
     while not FReadStatusDb.EOF do
     begin
+      StoredKey := FReadStatusDb.FieldByName('ITEMLINK').AsString;
       if (FReadStatusDb.FieldByName('FEEDURL').AsString = AFeedURL) and
-         (FReadStatusDb.FieldByName('ITEMLINK').AsString = AItemLink) then
+         ((StoredKey = AItemKey) or ((ALegacyLink <> '') and (StoredKey = ALegacyLink))) then
       begin
         Result := True;
         DebugLog('IsItemRead: FOUND');
@@ -1581,61 +1724,54 @@ begin
   except
     on E: Exception do
     begin
-      DebugLog('IsItemRead: ERROR - ' + E.Message + ' for ' + AItemLink);
+      DebugLog('IsItemRead: ERROR - ' + E.Message + ' for ' + AItemKey);
       Result := False;
     end;
   end;
 end;
 
-procedure TFormMain.MarkItemAsRead(const AFeedURL, AItemLink: string);
+procedure TFormMain.MarkItemAsRead(const AFeedURL, AItemKey: string; const ALegacyLink: string = '');
 var
   ItemHash: string;
   OldRecordCount, NewRecordCount: Integer;
   OldState: TDataSetState;
 begin
-  //showmessage ('entered markitemasread');
   if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
   begin
-    DebugLog('ERROR: Database not active for: ' + AItemLink);
+    DebugLog('ERROR: Database not active for: ' + AItemKey);
     Exit;
   end;
 
-  // Check if already marked as read
-  if IsItemRead(AFeedURL, AItemLink) then
+  if IsItemRead(AFeedURL, AItemKey, ALegacyLink) then
   begin
-    DebugLog('SKIP: Already marked as read: ' + AItemLink);
+    DebugLog('SKIP: Already marked as read: ' + AItemKey);
     Exit;
   end;
 
   try
-    ItemHash := ComputeItemHash(AFeedURL, AItemLink);
+    ItemHash := ComputeItemHash(AFeedURL, AItemKey);
     OldRecordCount := FReadStatusDb.RecordCount;
 
     DebugLog(Format('  Attempting to add: Hash=%s, RecordCount before=%d', [ItemHash, OldRecordCount]));
 
-    // Try to append
     FReadStatusDb.Append;
     OldState := FReadStatusDb.State;
     DebugLog(Format('  After Append: State=%d (dsInsert=%d)', [Ord(OldState), Ord(dsInsert)]));
 
-    // Set field values
     FReadStatusDb.FieldByName('FEEDURL').AsString := AFeedURL;
-    FReadStatusDb.FieldByName('ITEMLINK').AsString := AItemLink;
+    FReadStatusDb.FieldByName('ITEMLINK').AsString := Copy(AItemKey, 1, 255);
     FReadStatusDb.FieldByName('ITEMHASH').AsString := ItemHash;
     FReadStatusDb.FieldByName('ISREAD').AsBoolean := True;
     FReadStatusDb.FieldByName('DATEREAD').AsDateTime := Now;
 
-    DebugLog(Format('  Fields set. FEEDURL len=%d, ITEMLINK len=%d, ITEMHASH len=%d',
-                         [Length(AFeedURL), Length(AItemLink), Length(ItemHash)]));
+    DebugLog(Format('  Fields set. FEEDURL len=%d, ITEMKEY len=%d, ITEMHASH len=%d',
+                         [Length(AFeedURL), Length(AItemKey), Length(ItemHash)]));
 
-    // Try to post
     FReadStatusDb.Post;
-    // Ensure edits are flushed from dsInsert -> dsBrowse
     FReadStatusDb.CheckBrowseMode;
 
-    // Verify insert by querying (RecordCount can be unreliable)
-    if not IsItemRead(AFeedURL, AItemLink) then
-      DebugLog('*** Insert failed: still not found: ' + AItemLink);
+    if not IsItemRead(AFeedURL, AItemKey, ALegacyLink) then
+      DebugLog('*** Insert failed: still not found: ' + AItemKey);
 
     OldState := FReadStatusDb.State;
     NewRecordCount := FReadStatusDb.RecordCount;
@@ -1643,25 +1779,23 @@ begin
     DebugLog(Format('  After Post: State=%d (dsBrowse=%d), RecordCount=%d (was %d)',
                          [Ord(OldState), Ord(dsBrowse), NewRecordCount, OldRecordCount]));
 
-    // RecordCount is not a reliable correctness check in DBF datasets; keep only as a hint
     if NewRecordCount > OldRecordCount then
-      DebugLog('OK: Marked (RecordCount increased): ' + AItemLink)
+      DebugLog('OK: Marked (RecordCount increased): ' + AItemKey)
     else
       DebugLog('NOTE: RecordCount did not increase (may be normal); rely on IsItemRead verification above');
   except
     on E: Exception do
     begin
       DebugLog('EXCEPTION during Post: ' + E.ClassName + ' - ' + E.Message);
-      ShowMessage('Error marking item as read: ' + AItemLink + #13#10 + E.Message);
+      ShowMessage('Error marking item as read: ' + AItemKey + #13#10 + E.Message);
     end;
   end;
-  //showmessage ('exiting markitemasread');
 end;
 
 procedure TFormMain.MarkAllItemsAsRead(const AFeedURL: string);
 var
   i: Integer;
-  ItemLink: string;
+  ItemLink, ItemKey: string;
 begin
 {$IFDEF RSSREADER_DEBUG}
   FDebugLog.Clear;
@@ -1677,8 +1811,12 @@ begin
     if FListView.Items[i].SubItems.Count > 2 then
     begin
       ItemLink := FListView.Items[i].SubItems[2];
-      DebugLog(Format('[%d] Link: %s', [i, ItemLink]));
-      MarkItemAsRead(AFeedURL, ItemLink);
+      if FListView.Items[i].SubItems.Count > 3 then
+        ItemKey := FListView.Items[i].SubItems[3]
+      else
+        ItemKey := ItemLink;
+      DebugLog(Format('[%d] Key: %s', [i, ItemKey]));
+      MarkItemAsRead(AFeedURL, ItemKey, ItemLink);
       FListView.Items[i].Data := nil; // Mark as read visually
     end
     else
@@ -1694,33 +1832,187 @@ begin
   ShowMessage(FDebugLog.Text);
 {$ENDIF}
 
-  // Update the tree node text
-  if Assigned(FTreeView.Selected) then
-    UpdateFeedNodeText(FTreeView.Selected);
+  UpdateAllFeedNodeTexts;
+end;
+
+function TFormMain.BuildReadKeyCache: TStringList;
+var
+  CacheKey: string;
+begin
+  Result := TStringList.Create;
+  Result.Sorted := True;
+  Result.Duplicates := dupIgnore;
+
+  if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
+    Exit;
+
+  FReadStatusDb.First;
+  while not FReadStatusDb.EOF do
+  begin
+    CacheKey := FReadStatusDb.FieldByName('FEEDURL').AsString + #9 +
+                FReadStatusDb.FieldByName('ITEMLINK').AsString;
+    if Result.IndexOf(CacheKey) < 0 then
+      Result.Add(CacheKey);
+    FReadStatusDb.Next;
+  end;
+end;
+
+function TFormMain.FindCountIndex(ACounts: TStringList; const AFeedURL: string): Integer;
+var
+  i: Integer;
+  Prefix: string;
+begin
+  Result := -1;
+  if not Assigned(ACounts) then
+    Exit;
+
+  Prefix := AFeedURL + #9;
+  for i := 0 to ACounts.Count - 1 do
+    if Copy(ACounts[i], 1, Length(Prefix)) = Prefix then
+      Exit(i);
+end;
+
+function TFormMain.GetCountValue(ACounts: TStringList; const AFeedURL: string): Integer;
+var
+  Idx: Integer;
+  S: string;
+begin
+  Result := 0;
+  Idx := FindCountIndex(ACounts, AFeedURL);
+  if Idx < 0 then
+    Exit;
+
+  S := Copy(ACounts[Idx], Length(AFeedURL) + 2, MaxInt);
+  Result := StrToIntDef(S, 0);
+end;
+
+procedure TFormMain.IncrementCountValue(ACounts: TStringList; const AFeedURL: string);
+var
+  Idx, N: Integer;
+begin
+  if not Assigned(ACounts) then
+    Exit;
+
+  Idx := FindCountIndex(ACounts, AFeedURL);
+  if Idx < 0 then
+    ACounts.Add(AFeedURL + #9 + '1')
+  else
+  begin
+    N := GetCountValue(ACounts, AFeedURL);
+    ACounts[Idx] := AFeedURL + #9 + IntToStr(N + 1);
+  end;
 end;
 
 function TFormMain.GetUnreadCount(const AFeedURL: string): Integer;
 var
-  i: Integer;
-  CurrentNodeData: TFeedNodeData;
+  ReadKeys: TStringList;
+  FeedURL, LinkValue, ItemKeyValue: string;
+  ReadKey1, ReadKey2: string;
 begin
   Result := 0;
 
-  // Only count if this feed is currently loaded in the ListView
-  if Assigned(FTreeView.Selected) and Assigned(FTreeView.Selected.Data) then
-  begin
-    CurrentNodeData := TFeedNodeData(FTreeView.Selected.Data);
-    if Assigned(CurrentNodeData) and (CurrentNodeData.FeedURL = AFeedURL) then
+  if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
+    Exit;
+
+  if FFeedItemsDb.RecordCount = 0 then
+    Exit;
+
+  ReadKeys := BuildReadKeyCache;
+  try
+    FFeedItemsDb.First;
+    while not FFeedItemsDb.EOF do
     begin
-      // Count unread items in the ListView
-      for i := 0 to FListView.Items.Count - 1 do
+      FeedURL := FFeedItemsDb.FieldByName('FEEDURL').AsString;
+      if FeedURL = AFeedURL then
       begin
-        if FListView.Items[i].Data = Pointer(1) then
+        LinkValue := FFeedItemsDb.FieldByName('LINK').AsString;
+        ItemKeyValue := FFeedItemsDb.FieldByName('ITEMKEY').AsString;
+        ReadKey1 := AFeedURL + #9 + ItemKeyValue;
+        ReadKey2 := AFeedURL + #9 + LinkValue;
+        if (ReadKeys.IndexOf(ReadKey1) < 0) and
+           ((LinkValue = '') or (ReadKeys.IndexOf(ReadKey2) < 0)) then
           Inc(Result);
       end;
+      FFeedItemsDb.Next;
     end;
+  finally
+    ReadKeys.Free;
   end;
-  // If feed is not loaded, return 0 (no count shown)
+end;
+
+procedure TFormMain.UpdateAllFeedNodeTexts;
+var
+  i, UnreadCount: Integer;
+  Node: TTreeNode;
+  NodeData: TFeedNodeData;
+  BaseText, FeedURL, LinkValue, ItemKeyValue, ReadKey1, ReadKey2: string;
+  ReadKeys, Counts: TStringList;
+begin
+  if not Assigned(FTreeView) then
+    Exit;
+  if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
+    Exit;
+
+  ReadKeys := BuildReadKeyCache;
+  Counts := TStringList.Create;
+  try
+    { Feed URLs can contain '=' and other characters, and we update entries in-place,
+      so keep this list unsorted and do our own lookup. }
+    Counts.Sorted := False;
+    Counts.Duplicates := dupAccept;
+
+    if FFeedItemsDb.RecordCount > 0 then
+    begin
+      FFeedItemsDb.First;
+      while not FFeedItemsDb.EOF do
+      begin
+        FeedURL := FFeedItemsDb.FieldByName('FEEDURL').AsString;
+        LinkValue := FFeedItemsDb.FieldByName('LINK').AsString;
+        ItemKeyValue := FFeedItemsDb.FieldByName('ITEMKEY').AsString;
+
+        ReadKey1 := FeedURL + #9 + ItemKeyValue;
+        ReadKey2 := FeedURL + #9 + LinkValue;
+        if (ReadKeys.IndexOf(ReadKey1) < 0) and
+           ((LinkValue = '') or (ReadKeys.IndexOf(ReadKey2) < 0)) then
+        begin
+          IncrementCountValue(Counts, FeedURL);
+        end;
+
+        FFeedItemsDb.Next;
+      end;
+    end;
+
+    FTreeView.Items.BeginUpdate;
+    try
+      for i := 0 to FTreeView.Items.Count - 1 do
+      begin
+        Node := FTreeView.Items[i];
+        if Assigned(Node) and Assigned(Node.Data) then
+        begin
+          NodeData := TFeedNodeData(Node.Data);
+          if Assigned(NodeData) and (not NodeData.IsFolder) then
+          begin
+            BaseText := Node.Text;
+            if Pos(' (', BaseText) > 0 then
+              BaseText := Copy(BaseText, 1, Pos(' (', BaseText) - 1);
+
+            UnreadCount := GetCountValue(Counts, NodeData.FeedURL);
+            if UnreadCount > 0 then
+              Node.Text := BaseText + ' (' + IntToStr(UnreadCount) + ')'
+            else
+              Node.Text := BaseText;
+          end;
+        end;
+      end;
+    finally
+      FTreeView.Items.EndUpdate;
+    end;
+
+    FTreeView.Invalidate;
+  finally
+    Counts.Free;
+    ReadKeys.Free;
+  end;
 end;
 
 procedure TFormMain.UpdateFeedNodeText(Node: TTreeNode);
@@ -1738,19 +2030,14 @@ begin
 
   UnreadCount := GetUnreadCount(NodeData.FeedURL);
 
-  // Get base name without unread count
   BaseText := Node.Text;
   if Pos(' (', BaseText) > 0 then
     BaseText := Copy(BaseText, 1, Pos(' (', BaseText) - 1);
 
-  // Update node text with unread count
   if UnreadCount > 0 then
     Node.Text := BaseText + ' (' + IntToStr(UnreadCount) + ')'
   else
     Node.Text := BaseText;
-
-  FTreeView.Invalidate;
-  FTreeView.Update;
 end;
 
 procedure TFormMain.MenuMarkAllReadClick(Sender: TObject);
