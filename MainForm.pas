@@ -10,12 +10,22 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
   ExtCtrls, Menus, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
-  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd;
+  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils;
 
 type
   TFeedNodeData = class
     FeedURL: string;
     IsFolder: Boolean;
+  end;
+
+  TFeedListEntry = class
+    Title: string;
+    PubDate: string;
+    ContentValue: string;
+    LinkValue: string;
+    ItemKeyValue: string;
+    Unread: Boolean;
+    SortKey: string;
   end;
 
   { TCustomHtmlDataProvider - Simple data provider for image loading }
@@ -166,6 +176,132 @@ begin
   Result := Pos('youtube.com/feeds/videos.xml', LowerCase(AFeedURL)) > 0;
 end;
 
+
+function MonthNameToNumber(const S: string): Integer;
+const
+  Months: array[1..12] of string =
+    ('JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+     'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC');
+var
+  I: Integer;
+begin
+  Result := 0;
+  for I := 1 to 12 do
+    if Months[I] = UpperCase(S) then
+      Exit(I);
+end;
+
+function ExtractDigits(const S: string): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(S) do
+    if S[I] in ['0'..'9'] then
+      Result := Result + S[I];
+end;
+
+function FeedDateSortKey(const APubDate: string): string;
+var
+  S, TimePart, Digits: string;
+  Y, M, D, H, N, Sec: Integer;
+  Parts, TParts: TStringList;
+  Work: string;
+begin
+  Result := '00000000000000';
+  S := Trim(APubDate);
+  if S = '' then
+    Exit;
+
+  if (Length(S) >= 10) and (S[5] = '-') and (S[8] = '-') then
+  begin
+    Y := StrToIntDef(Copy(S, 1, 4), 0);
+    M := StrToIntDef(Copy(S, 6, 2), 0);
+    D := StrToIntDef(Copy(S, 9, 2), 0);
+    H := 0;
+    N := 0;
+    Sec := 0;
+
+    if Length(S) >= 19 then
+    begin
+      H := StrToIntDef(Copy(S, 12, 2), 0);
+      N := StrToIntDef(Copy(S, 15, 2), 0);
+      Sec := StrToIntDef(Copy(S, 18, 2), 0);
+    end;
+
+    Result := Format('%.4d%.2d%.2d%.2d%.2d%.2d', [Y, M, D, H, N, Sec]);
+    Exit;
+  end;
+
+  Work := StringReplace(S, ',', ' ', [rfReplaceAll]);
+  while Pos('  ', Work) > 0 do
+    Work := StringReplace(Work, '  ', ' ', [rfReplaceAll]);
+  Work := Trim(Work);
+
+  Parts := TStringList.Create;
+  TParts := TStringList.Create;
+  try
+    ExtractStrings([' '], [], PChar(Work), Parts);
+
+    if Parts.Count >= 4 then
+    begin
+      if Length(Parts[0]) = 3 then
+      begin
+        D := StrToIntDef(Parts[1], 0);
+        M := MonthNameToNumber(Parts[2]);
+        Y := StrToIntDef(Parts[3], 0);
+        if Parts.Count >= 5 then
+          TimePart := Parts[4]
+        else
+          TimePart := '00:00:00';
+      end
+      else
+      begin
+        D := StrToIntDef(Parts[0], 0);
+        M := MonthNameToNumber(Parts[1]);
+        Y := StrToIntDef(Parts[2], 0);
+        if Parts.Count >= 4 then
+          TimePart := Parts[3]
+        else
+          TimePart := '00:00:00';
+      end;
+
+      ExtractStrings([':'], [], PChar(TimePart), TParts);
+      if TParts.Count >= 1 then H := StrToIntDef(ExtractDigits(TParts[0]), 0) else H := 0;
+      if TParts.Count >= 2 then N := StrToIntDef(ExtractDigits(TParts[1]), 0) else N := 0;
+      if TParts.Count >= 3 then Sec := StrToIntDef(ExtractDigits(TParts[2]), 0) else Sec := 0;
+
+      if (Y > 0) and (M > 0) and (D > 0) then
+      begin
+        Result := Format('%.4d%.2d%.2d%.2d%.2d%.2d', [Y, M, D, H, N, Sec]);
+        Exit;
+      end;
+    end;
+  finally
+    TParts.Free;
+    Parts.Free;
+  end;
+
+  Digits := ExtractDigits(S);
+  if Length(Digits) >= 8 then
+  begin
+    while Length(Digits) < 14 do
+      Digits := Digits + '0';
+    Result := Copy(Digits, 1, 14);
+  end;
+end;
+
+function CompareFeedEntriesDescending(Item1, Item2: Pointer): Integer;
+var
+  A, B: TFeedListEntry;
+begin
+  A := TFeedListEntry(Item1);
+  B := TFeedListEntry(Item2);
+
+  Result := CompareStr(B.SortKey, A.SortKey);
+  if Result = 0 then
+    Result := CompareText(A.Title, B.Title);
+end;
 
 { TCustomHtmlDataProvider }
 
@@ -745,15 +881,22 @@ end;
 procedure TFormMain.TreeViewSelectionChanged(Sender: TObject);
 var
   NodeData: TFeedNodeData;
+  IsYouTubeFeed: Boolean;
 begin
-  //showmessage ('entered treeviewselectionchanged');
   if FTreeView.Selected = nil then
     Exit;
 
   NodeData := GetSelectedNodeData;
   if Assigned(NodeData) and not NodeData.IsFolder then
-    LoadRSSFeed(NodeData.FeedURL);
-  //showmessage ('exiting treeviewselectionchanged');
+  begin
+    IsYouTubeFeed := IsYouTubeFeedURL(NodeData.FeedURL);
+    LoadFeedItemsFromDb(NodeData.FeedURL, IsYouTubeFeed);
+
+    if FListView.Items.Count = 0 then
+      FHtmlPanel.SetHTMLFromStr('<html><body><p>No cached items for this feed yet.</p></body></html>')
+    else
+      FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an item to view its content.</p></body></html>');
+  end;
 end;
 
 procedure TFormMain.ListViewSelectItem(Sender: TObject; Item: TListItem;
@@ -1470,7 +1613,11 @@ procedure TFormMain.LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boole
 var
   ListItem: TListItem;
   ContentValue, LinkValue, ItemKeyValue: string;
+  Entries: TList;
+  Entry: TFeedListEntry;
+  I: Integer;
 begin
+  Entries := TList.Create;
   FListView.Items.BeginUpdate;
   try
     FListView.Items.Clear;
@@ -1486,31 +1633,50 @@ begin
     begin
       if FFeedItemsDb.FieldByName('FEEDURL').AsString = AURL then
       begin
-        ListItem := FListView.Items.Add;
-        ListItem.Caption := FFeedItemsDb.FieldByName('TITLE').AsString;
-        ListItem.SubItems.Add(FFeedItemsDb.FieldByName('PUBDATE').AsString);
-
-        ContentValue := FFeedItemsDb.FieldByName('CONTENT').AsString;
-        LinkValue := FFeedItemsDb.FieldByName('LINK').AsString;
-        ItemKeyValue := FFeedItemsDb.FieldByName('ITEMKEY').AsString;
-
-        if IsYouTubeFeed then
-          ListItem.SubItems.Add(LinkValue)
-        else
-          ListItem.SubItems.Add(ContentValue);
-
-        ListItem.SubItems.Add(LinkValue);
-        ListItem.SubItems.Add(ItemKeyValue);
-
-        if not IsItemRead(AURL, ItemKeyValue, LinkValue) then
-          ListItem.Data := Pointer(1)
-        else
-          ListItem.Data := nil;
+        Entry := TFeedListEntry.Create;
+        Entry.Title := FFeedItemsDb.FieldByName('TITLE').AsString;
+        Entry.PubDate := FFeedItemsDb.FieldByName('PUBDATE').AsString;
+        Entry.ContentValue := FFeedItemsDb.FieldByName('CONTENT').AsString;
+        Entry.LinkValue := FFeedItemsDb.FieldByName('LINK').AsString;
+        Entry.ItemKeyValue := FFeedItemsDb.FieldByName('ITEMKEY').AsString;
+        Entry.Unread := not IsItemRead(AURL, Entry.ItemKeyValue, Entry.LinkValue);
+        Entry.SortKey := FeedDateSortKey(Entry.PubDate);
+        Entries.Add(Entry);
       end;
 
       FFeedItemsDb.Next;
     end;
+
+    Entries.Sort(@CompareFeedEntriesDescending);
+
+    for I := 0 to Entries.Count - 1 do
+    begin
+      Entry := TFeedListEntry(Entries[I]);
+      ListItem := FListView.Items.Add;
+      ListItem.Caption := Entry.Title;
+      ListItem.SubItems.Add(Entry.PubDate);
+
+      ContentValue := Entry.ContentValue;
+      LinkValue := Entry.LinkValue;
+      ItemKeyValue := Entry.ItemKeyValue;
+
+      if IsYouTubeFeed then
+        ListItem.SubItems.Add(LinkValue)
+      else
+        ListItem.SubItems.Add(ContentValue);
+
+      ListItem.SubItems.Add(LinkValue);
+      ListItem.SubItems.Add(ItemKeyValue);
+
+      if Entry.Unread then
+        ListItem.Data := Pointer(1)
+      else
+        ListItem.Data := nil;
+    end;
   finally
+    for I := 0 to Entries.Count - 1 do
+      TObject(Entries[I]).Free;
+    Entries.Free;
     FListView.Items.EndUpdate;
   end;
 end;
