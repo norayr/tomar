@@ -143,7 +143,7 @@ implementation
 {$R *.lfm}
 
 uses
-  LCLType, LCLIntf, RssUtils;
+  LCLType, LCLIntf, RssUtils, FeedDbUtils;
   //FeedDBCleanup;
 
 
@@ -1539,59 +1539,12 @@ end;
 
 procedure TFormMain.MarkFeedItemsAsNotSeen(const AURL: string);
 begin
-  if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
-    Exit;
-
-  FFeedItemsDb.First;
-  while not FFeedItemsDb.EOF do
-  begin
-    if FFeedItemsDb.FieldByName('FEEDURL').AsString = AURL then
-    begin
-      FFeedItemsDb.Edit;
-      FFeedItemsDb.FieldByName('INLASTFETCH').AsBoolean := False;
-      FFeedItemsDb.Post;
-    end;
-    FFeedItemsDb.Next;
-  end;
+  FeedDbUtils.MarkFeedItemsAsNotSeen(FFeedItemsDb, AURL);
 end;
 
 procedure TFormMain.SaveOrUpdateFeedItem(const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string);
-var
-  Found: Boolean;
 begin
-  if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
-    Exit;
-
-  Found := False;
-  FFeedItemsDb.First;
-  while not FFeedItemsDb.EOF do
-  begin
-    if (FFeedItemsDb.FieldByName('FEEDURL').AsString = AFeedURL) and
-       (FFeedItemsDb.FieldByName('ITEMKEY').AsString = AItemKey) then
-    begin
-      Found := True;
-      Break;
-    end;
-    FFeedItemsDb.Next;
-  end;
-
-  if Found then
-    FFeedItemsDb.Edit
-  else
-  begin
-    FFeedItemsDb.Append;
-    FFeedItemsDb.FieldByName('FEEDURL').AsString := AFeedURL;
-    FFeedItemsDb.FieldByName('ITEMKEY').AsString := AItemKey;
-    FFeedItemsDb.FieldByName('FIRSTSEEN').AsDateTime := Now;
-  end;
-
-  FFeedItemsDb.FieldByName('TITLE').AsString := Copy(ATitle, 1, 255);
-  FFeedItemsDb.FieldByName('PUBDATE').AsString := Copy(APubDate, 1, 127);
-  FFeedItemsDb.FieldByName('CONTENT').AsString := AContent;
-  FFeedItemsDb.FieldByName('LINK').AsString := Copy(ALink, 1, 255);
-  FFeedItemsDb.FieldByName('LASTSEEN').AsDateTime := Now;
-  FFeedItemsDb.FieldByName('INLASTFETCH').AsBoolean := True;
-  FFeedItemsDb.Post;
+  FeedDbUtils.SaveOrUpdateFeedItem(FFeedItemsDb, AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink);
 end;
 
 function TFormMain.MakeItemKey(const AGuid, AId, ALink, ATitle, APubDate: string): string;
@@ -1639,64 +1592,8 @@ begin
 end;
 
 procedure TFormMain.InitializeDatabase;
-var
-  DbPath: string;
 begin
-  DbPath := TomarDataDir;
-  if not DirectoryExists(DbPath) then
-    CreateDir(DbPath);
-
-  FReadStatusDb := TDbf.Create(nil);
-  FReadStatusDb.FilePathFull := DbPath;
-  FReadStatusDb.TableName := 'readstatus.dbf';
-  FReadStatusDb.TableLevel := 7;
-
-  if not FileExists(DbPath + 'readstatus.dbf') then
-  begin
-    with FReadStatusDb.FieldDefs do
-    begin
-      Clear;
-      Add('ID', ftAutoInc, 0, False);
-      Add('FEEDURL', ftString, 255, True);
-      Add('ITEMLINK', ftString, 255, True);
-      Add('ITEMHASH', ftString, 32, True);
-      Add('ISREAD', ftBoolean, 0, True);
-      Add('DATEREAD', ftDateTime, 0, False);
-    end;
-    FReadStatusDb.CreateTable;
-  end;
-
-  FReadStatusDb.Open;
-  try
-    FReadStatusDb.RegenerateIndexes;
-  finally
-  end;
-
-  FFeedItemsDb := TDbf.Create(nil);
-  FFeedItemsDb.FilePathFull := DbPath;
-  FFeedItemsDb.TableName := 'feeditems.dbf';
-  FFeedItemsDb.TableLevel := 7;
-
-  if not FileExists(DbPath + 'feeditems.dbf') then
-  begin
-    with FFeedItemsDb.FieldDefs do
-    begin
-      Clear;
-      Add('ID', ftAutoInc, 0, False);
-      Add('FEEDURL', ftString, 255, True);
-      Add('ITEMKEY', ftString, 255, True);
-      Add('TITLE', ftString, 255, False);
-      Add('PUBDATE', ftString, 127, False);
-      Add('CONTENT', ftMemo, 0, False);
-      Add('LINK', ftString, 255, False);
-      Add('FIRSTSEEN', ftDateTime, 0, False);
-      Add('LASTSEEN', ftDateTime, 0, False);
-      Add('INLASTFETCH', ftBoolean, 0, False);
-    end;
-    FFeedItemsDb.CreateTable;
-  end;
-
-  FFeedItemsDb.Open;
+  FeedDbUtils.InitializeDatabases(FReadStatusDb, FFeedItemsDb, TomarDataDir);
 end;
 
 procedure TFormMain.DebugLog(const S: string);
@@ -1708,103 +1605,19 @@ begin
 end;
 
 function TFormMain.ComputeItemHash(const AFeedURL, AItemKey: string): string;
-var
-  Combined: string;
 begin
-  Combined := AFeedURL + AItemKey;
-  Result := MD5Print(MD5String(Combined));
+  Result := MD5Print(MD5String(AFeedURL + AItemKey));
 end;
 
 function TFormMain.IsItemRead(const AFeedURL, AItemKey: string; const ALegacyLink: string = ''): Boolean;
-var
-  StoredKey: string;
 begin
-  Result := False;
-  if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
-  begin
-    DebugLog('IsItemRead: Database not active for ' + AItemKey);
-    Exit;
-  end;
-
-  try
-    FReadStatusDb.First;
-    while not FReadStatusDb.EOF do
-    begin
-      StoredKey := FReadStatusDb.FieldByName('ITEMLINK').AsString;
-      if (FReadStatusDb.FieldByName('FEEDURL').AsString = AFeedURL) and
-         ((StoredKey = AItemKey) or ((ALegacyLink <> '') and (StoredKey = ALegacyLink))) then
-      begin
-        Result := True;
-        DebugLog('IsItemRead: FOUND');
-        Break;
-      end;
-      FReadStatusDb.Next;
-    end;
-
-    if not Result then
-      DebugLog('IsItemRead: NOT FOUND');
-  except
-    on E: Exception do
-    begin
-      DebugLog('IsItemRead: ERROR - ' + E.Message + ' for ' + AItemKey);
-      Result := False;
-    end;
-  end;
+  Result := FeedDbUtils.IsItemRead(FReadStatusDb, AFeedURL, AItemKey, ALegacyLink, @DebugLog);
 end;
 
 procedure TFormMain.MarkItemAsRead(const AFeedURL, AItemKey: string; const ALegacyLink: string = '');
-var
-  ItemHash: string;
-  OldRecordCount, NewRecordCount: Integer;
-  OldState: TDataSetState;
 begin
-  if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
-  begin
-    DebugLog('ERROR: Database not active for: ' + AItemKey);
-    Exit;
-  end;
-
-  if IsItemRead(AFeedURL, AItemKey, ALegacyLink) then
-  begin
-    DebugLog('SKIP: Already marked as read: ' + AItemKey);
-    Exit;
-  end;
-
   try
-    ItemHash := ComputeItemHash(AFeedURL, AItemKey);
-    OldRecordCount := FReadStatusDb.RecordCount;
-
-    DebugLog(Format('  Attempting to add: Hash=%s, RecordCount before=%d', [ItemHash, OldRecordCount]));
-
-    FReadStatusDb.Append;
-    OldState := FReadStatusDb.State;
-    DebugLog(Format('  After Append: State=%d (dsInsert=%d)', [Ord(OldState), Ord(dsInsert)]));
-
-    FReadStatusDb.FieldByName('FEEDURL').AsString := AFeedURL;
-    FReadStatusDb.FieldByName('ITEMLINK').AsString := Copy(AItemKey, 1, 255);
-    FReadStatusDb.FieldByName('ITEMHASH').AsString := ItemHash;
-    FReadStatusDb.FieldByName('ISREAD').AsBoolean := True;
-    FReadStatusDb.FieldByName('DATEREAD').AsDateTime := Now;
-
-    DebugLog(Format('  Fields set. FEEDURL len=%d, ITEMKEY len=%d, ITEMHASH len=%d',
-                         [Length(AFeedURL), Length(AItemKey), Length(ItemHash)]));
-
-    FReadStatusDb.Post;
-    FReadStatusDb.CheckBrowseMode;
-
-    if not IsItemRead(AFeedURL, AItemKey, ALegacyLink) then
-      DebugLog('*** Insert failed: still not found: ' + AItemKey);
-
-    OldState := FReadStatusDb.State;
-    NewRecordCount := FReadStatusDb.RecordCount;
-
-    DebugLog(Format('  After Post: State=%d (dsBrowse=%d), RecordCount=%d (was %d)',
-                         [Ord(OldState), Ord(dsBrowse), NewRecordCount, OldRecordCount]));
-
-    if NewRecordCount > OldRecordCount then
-      DebugLog('OK: Marked (RecordCount increased): ' + AItemKey)
-    else
-      DebugLog('NOTE: RecordCount did not increase (may be normal); rely on IsItemRead verification above');
+    FeedDbUtils.MarkItemAsRead(FReadStatusDb, AFeedURL, AItemKey, ALegacyLink, @DebugLog);
   except
     on E: Exception do
     begin
@@ -1858,108 +1671,28 @@ begin
 end;
 
 function TFormMain.BuildReadKeyCache: TStringList;
-var
-  CacheKey: string;
 begin
-  Result := TStringList.Create;
-  Result.Sorted := True;
-  Result.Duplicates := dupIgnore;
-
-  if not Assigned(FReadStatusDb) or not FReadStatusDb.Active then
-    Exit;
-
-  FReadStatusDb.First;
-  while not FReadStatusDb.EOF do
-  begin
-    CacheKey := FReadStatusDb.FieldByName('FEEDURL').AsString + #9 +
-                FReadStatusDb.FieldByName('ITEMLINK').AsString;
-    if Result.IndexOf(CacheKey) < 0 then
-      Result.Add(CacheKey);
-    FReadStatusDb.Next;
-  end;
+  Result := FeedDbUtils.BuildReadKeyCache(FReadStatusDb);
 end;
 
 function TFormMain.FindCountIndex(ACounts: TStringList; const AFeedURL: string): Integer;
-var
-  i: Integer;
-  Prefix: string;
 begin
-  Result := -1;
-  if not Assigned(ACounts) then
-    Exit;
-
-  Prefix := AFeedURL + #9;
-  for i := 0 to ACounts.Count - 1 do
-    if Copy(ACounts[i], 1, Length(Prefix)) = Prefix then
-      Exit(i);
+  Result := FeedDbUtils.FindCountIndex(ACounts, AFeedURL);
 end;
 
 function TFormMain.GetCountValue(ACounts: TStringList; const AFeedURL: string): Integer;
-var
-  Idx: Integer;
-  S: string;
 begin
-  Result := 0;
-  Idx := FindCountIndex(ACounts, AFeedURL);
-  if Idx < 0 then
-    Exit;
-
-  S := Copy(ACounts[Idx], Length(AFeedURL) + 2, MaxInt);
-  Result := StrToIntDef(S, 0);
+  Result := FeedDbUtils.GetCountValue(ACounts, AFeedURL);
 end;
 
 procedure TFormMain.IncrementCountValue(ACounts: TStringList; const AFeedURL: string);
-var
-  Idx, N: Integer;
 begin
-  if not Assigned(ACounts) then
-    Exit;
-
-  Idx := FindCountIndex(ACounts, AFeedURL);
-  if Idx < 0 then
-    ACounts.Add(AFeedURL + #9 + '1')
-  else
-  begin
-    N := GetCountValue(ACounts, AFeedURL);
-    ACounts[Idx] := AFeedURL + #9 + IntToStr(N + 1);
-  end;
+  FeedDbUtils.IncrementCountValue(ACounts, AFeedURL);
 end;
 
 function TFormMain.GetUnreadCount(const AFeedURL: string): Integer;
-var
-  ReadKeys: TStringList;
-  FeedURL, LinkValue, ItemKeyValue: string;
-  ReadKey1, ReadKey2: string;
 begin
-  Result := 0;
-
-  if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
-    Exit;
-
-  if FFeedItemsDb.RecordCount = 0 then
-    Exit;
-
-  ReadKeys := BuildReadKeyCache;
-  try
-    FFeedItemsDb.First;
-    while not FFeedItemsDb.EOF do
-    begin
-      FeedURL := FFeedItemsDb.FieldByName('FEEDURL').AsString;
-      if FeedURL = AFeedURL then
-      begin
-        LinkValue := FFeedItemsDb.FieldByName('LINK').AsString;
-        ItemKeyValue := FFeedItemsDb.FieldByName('ITEMKEY').AsString;
-        ReadKey1 := AFeedURL + #9 + ItemKeyValue;
-        ReadKey2 := AFeedURL + #9 + LinkValue;
-        if (ReadKeys.IndexOf(ReadKey1) < 0) and
-           ((LinkValue = '') or (ReadKeys.IndexOf(ReadKey2) < 0)) then
-          Inc(Result);
-      end;
-      FFeedItemsDb.Next;
-    end;
-  finally
-    ReadKeys.Free;
-  end;
+  Result := FeedDbUtils.GetUnreadCount(FFeedItemsDb, FReadStatusDb, AFeedURL);
 end;
 
 procedure TFormMain.UpdateAllFeedNodeTexts;
