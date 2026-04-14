@@ -73,6 +73,8 @@ type
     procedure MenuMarkAllReadClick(Sender: TObject);
     procedure MenuShowDebugLogClick(Sender: TObject);
     procedure ListViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+    procedure RefreshFeedAction(const AFeedURL: string);
+    procedure MarkFeedReadAction(const AFeedURL: string);
 
     procedure LoadFeedList;
     procedure SaveFeedList;
@@ -103,7 +105,7 @@ implementation
 {$R *.lfm}
 
 uses
-  LCLType, LCLIntf, RssUtils, FeedDbUtils, FeedTreeUtils;
+  LCLType, LCLIntf, RssUtils, FeedDbUtils, FeedTreeUtils, FeedActionUtils;
   //FeedDBCleanup;
 
 
@@ -889,6 +891,17 @@ begin
   end;
 end;
 
+procedure TFormMain.RefreshFeedAction(const AFeedURL: string);
+begin
+  LoadRSSFeed(AFeedURL);
+end;
+
+procedure TFormMain.MarkFeedReadAction(const AFeedURL: string);
+begin
+  LoadRSSFeed(AFeedURL);
+  MarkAllItemsAsRead(AFeedURL);
+end;
+
 procedure TFormMain.MenuRefreshClick(Sender: TObject);
 var
   NodeData: TFeedNodeData;
@@ -901,49 +914,13 @@ end;
 procedure TFormMain.MenuRefreshFeedsClick(Sender: TObject);
 var
   NodeData: TFeedNodeData;
-
-  procedure RefreshFeedsInNode(Node: TTreeNode; var Count: Integer);
-  var
-    ChildNode: TTreeNode;
-    ChildData: TFeedNodeData;
-  begin
-    if not Assigned(Node) then
-      Exit;
-
-    if Assigned(Node.Data) then
-    begin
-      ChildData := TFeedNodeData(Node.Data);
-
-      if ChildData.IsFolder then
-      begin
-        // Recursively process children
-        ChildNode := Node.GetFirstChild;
-        while Assigned(ChildNode) do
-        begin
-          RefreshFeedsInNode(ChildNode, Count);
-          ChildNode := ChildNode.GetNextSibling;
-        end;
-      end
-      else
-      begin
-        // It is a feed - refresh it
-        FTreeView.Selected := Node;
-        LoadRSSFeed(ChildData.FeedURL);
-        Inc(Count);
-        Application.ProcessMessages;
-      end;
-    end;
-  end;
-
-var
   RefreshCount: Integer;
 begin
   NodeData := GetSelectedNodeData;
   if not Assigned(NodeData) or not NodeData.IsFolder then
     Exit;
 
-  RefreshCount := 0;
-  RefreshFeedsInNode(FTreeView.Selected, RefreshCount);
+  RefreshCount := FeedActionUtils.RefreshFeedsInSubtree(FTreeView.Selected, @RefreshFeedAction);
 
   if RefreshCount > 0 then
     ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds in folder.')
@@ -953,9 +930,6 @@ end;
 
 procedure TFormMain.MenuRefreshAllClick(Sender: TObject);
 var
-  i: Integer;
-  Node: TTreeNode;
-  NodeData: TFeedNodeData;
   RefreshCount: Integer;
 begin
   if not Assigned(FTreeView) or (FTreeView.Items.Count = 0) then
@@ -964,25 +938,7 @@ begin
     Exit;
   end;
 
-  RefreshCount := 0;
-
-  // Loop through all tree nodes and reload each feed
-  for i := 0 to FTreeView.Items.Count - 1 do
-  begin
-    Node := FTreeView.Items[i];
-    if Assigned(Node) and Assigned(Node.Data) then
-    begin
-      NodeData := TFeedNodeData(Node.Data);
-      if not NodeData.IsFolder then
-      begin
-        // Select this node and load its feed
-        FTreeView.Selected := Node;
-        LoadRSSFeed(NodeData.FeedURL);
-        Inc(RefreshCount);
-        Application.ProcessMessages; // Allow UI to update
-      end;
-    end;
-  end;
+  RefreshCount := FeedActionUtils.RefreshAllFeeds(FTreeView, @RefreshFeedAction);
 
   if RefreshCount > 0 then
     ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds.')
@@ -1177,48 +1133,6 @@ end;
 procedure TFormMain.MenuMarkAllReadClick(Sender: TObject);
 var
   NodeData: TFeedNodeData;
-
-  procedure MarkFeedsInNode(Node: TTreeNode);
-  var
-    ChildNode: TTreeNode;
-    ChildData: TFeedNodeData;
-    OldSelected: TTreeNode;
-  begin
-    if not Assigned(Node) then
-      Exit;
-
-    if Assigned(Node.Data) then
-    begin
-      ChildData := TFeedNodeData(Node.Data);
-
-      if ChildData.IsFolder then
-      begin
-        // Recursively process children
-        ChildNode := Node.GetFirstChild;
-        while Assigned(ChildNode) do
-        begin
-          MarkFeedsInNode(ChildNode);
-          ChildNode := ChildNode.GetNextSibling;
-        end;
-      end
-      else
-      begin
-        // It is a feed - mark all its items as read
-        // We need to load the feed first to mark items
-        OldSelected := FTreeView.Selected;
-        try
-          FTreeView.Selected := Node;
-          LoadRSSFeed(ChildData.FeedURL);
-          MarkAllItemsAsRead(ChildData.FeedURL);
-          //Application.ProcessMessages;
-        finally
-          FTreeView.Selected := OldSelected;
-        end;
-      end;
-    end;
-  end;
-
-var
   MarkedCount: Integer;
 begin
   NodeData := GetSelectedNodeData;
@@ -1227,13 +1141,14 @@ begin
 
   if NodeData.IsFolder then
   begin
-    // Mark all feeds in this folder and subfolders
-    MarkFeedsInNode(FTreeView.Selected);
-    ShowMessage('All items in folder marked as read.');
+    MarkedCount := FeedActionUtils.ProcessFeedsInSubtree(FTreeView.Selected, @MarkFeedReadAction);
+    if MarkedCount > 0 then
+      ShowMessage('All items in folder marked as read.')
+    else
+      ShowMessage('No feeds found in folder.');
   end
   else
   begin
-    // Single feed
     MarkAllItemsAsRead(NodeData.FeedURL);
     ShowMessage('All items marked as read.');
   end;
