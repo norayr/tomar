@@ -203,44 +203,68 @@ end;
 
 function FeedDateSortKey(const APubDate: string): string;
 var
-  S, TimePart, Digits: string;
+  S, TimePart, Digits, ISOTime: string;
   Y, M, D, H, N, Sec: Integer;
   Parts, TParts: TStringList;
   Work: string;
+  TZPos, P: Integer;
 begin
   Result := '00000000000000';
   S := Trim(APubDate);
   if S = '' then
     Exit;
 
-  if (Length(S) >= 10) and (S[5] = '-') and (S[8] = '-') then
-  begin
-    Y := StrToIntDef(Copy(S, 1, 4), 0);
-    M := StrToIntDef(Copy(S, 6, 2), 0);
-    D := StrToIntDef(Copy(S, 9, 2), 0);
-    H := 0;
-    N := 0;
-    Sec := 0;
-
-    if Length(S) >= 19 then
-    begin
-      H := StrToIntDef(Copy(S, 12, 2), 0);
-      N := StrToIntDef(Copy(S, 15, 2), 0);
-      Sec := StrToIntDef(Copy(S, 18, 2), 0);
-    end;
-
-    Result := Format('%.4d%.2d%.2d%.2d%.2d%.2d', [Y, M, D, H, N, Sec]);
-    Exit;
-  end;
-
-  Work := StringReplace(S, ',', ' ', [rfReplaceAll]);
-  while Pos('  ', Work) > 0 do
-    Work := StringReplace(Work, '  ', ' ', [rfReplaceAll]);
-  Work := Trim(Work);
-
   Parts := TStringList.Create;
   TParts := TStringList.Create;
   try
+    if (Length(S) >= 10) and (S[5] = '-') and (S[8] = '-') then
+    begin
+      Y := StrToIntDef(Copy(S, 1, 4), 0);
+      M := StrToIntDef(Copy(S, 6, 2), 0);
+      D := StrToIntDef(Copy(S, 9, 2), 0);
+      H := 0;
+      N := 0;
+      Sec := 0;
+
+      if Length(S) >= 16 then
+      begin
+        ISOTime := Copy(S, 12, MaxInt);
+        TZPos := Pos('Z', UpperCase(ISOTime));
+        if TZPos > 0 then
+          ISOTime := Copy(ISOTime, 1, TZPos - 1);
+
+        if Length(ISOTime) > 0 then
+        begin
+          P := 1;
+          while P <= Length(ISOTime) do
+          begin
+            if (ISOTime[P] in ['0'..'9', ':', ' ']) then
+              Inc(P)
+            else
+              Break;
+          end;
+          ISOTime := Trim(Copy(ISOTime, 1, P - 1));
+        end;
+
+        TParts.Clear;
+        ExtractStrings([':'], [], PChar(ISOTime), TParts);
+        if TParts.Count >= 1 then H := StrToIntDef(ExtractDigits(TParts[0]), 0) else H := 0;
+        if TParts.Count >= 2 then N := StrToIntDef(ExtractDigits(TParts[1]), 0) else N := 0;
+        if TParts.Count >= 3 then Sec := StrToIntDef(ExtractDigits(TParts[2]), 0) else Sec := 0;
+      end;
+
+      if (Y > 0) and (M > 0) and (D > 0) then
+      begin
+        Result := Format('%.4d%.2d%.2d%.2d%.2d%.2d', [Y, M, D, H, N, Sec]);
+        Exit;
+      end;
+    end;
+
+    Work := StringReplace(S, ',', ' ', [rfReplaceAll]);
+    while Pos('  ', Work) > 0 do
+      Work := StringReplace(Work, '  ', ' ', [rfReplaceAll]);
+    Work := Trim(Work);
+
     ExtractStrings([' '], [], PChar(Work), Parts);
 
     if Parts.Count >= 4 then
