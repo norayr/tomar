@@ -10,7 +10,7 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
   ExtCtrls, Menus, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
-  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils;
+  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils, FeedListUtils;
 
 type
   { TFormMain }
@@ -1070,75 +1070,8 @@ begin
 end;
 
 procedure TFormMain.LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean);
-var
-  ListItem: TListItem;
-  ContentValue, LinkValue, ItemKeyValue: string;
-  Entries: TList;
-  Entry: TFeedListEntry;
-  I: Integer;
 begin
-  Entries := TList.Create;
-  FListView.Items.BeginUpdate;
-  try
-    FListView.Items.Clear;
-
-    if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
-      Exit;
-
-    if FFeedItemsDb.RecordCount = 0 then
-      Exit;
-
-    FFeedItemsDb.First;
-    while not FFeedItemsDb.EOF do
-    begin
-      if FFeedItemsDb.FieldByName('FEEDURL').AsString = AURL then
-      begin
-        Entry := TFeedListEntry.Create;
-        Entry.Title := FFeedItemsDb.FieldByName('TITLE').AsString;
-        Entry.PubDate := FFeedItemsDb.FieldByName('PUBDATE').AsString;
-        Entry.ContentValue := FFeedItemsDb.FieldByName('CONTENT').AsString;
-        Entry.LinkValue := FFeedItemsDb.FieldByName('LINK').AsString;
-        Entry.ItemKeyValue := FFeedItemsDb.FieldByName('ITEMKEY').AsString;
-        Entry.Unread := not IsItemRead(AURL, Entry.ItemKeyValue, Entry.LinkValue);
-        Entry.SortKey := FeedDateSortKey(Entry.PubDate);
-        Entries.Add(Entry);
-      end;
-
-      FFeedItemsDb.Next;
-    end;
-
-    Entries.Sort(@CompareFeedEntriesDescending);
-
-    for I := 0 to Entries.Count - 1 do
-    begin
-      Entry := TFeedListEntry(Entries[I]);
-      ListItem := FListView.Items.Add;
-      ListItem.Caption := Entry.Title;
-      ListItem.SubItems.Add(Entry.PubDate);
-
-      ContentValue := Entry.ContentValue;
-      LinkValue := Entry.LinkValue;
-      ItemKeyValue := Entry.ItemKeyValue;
-
-      if IsYouTubeFeed then
-        ListItem.SubItems.Add(LinkValue)
-      else
-        ListItem.SubItems.Add(ContentValue);
-
-      ListItem.SubItems.Add(LinkValue);
-      ListItem.SubItems.Add(ItemKeyValue);
-
-      if Entry.Unread then
-        ListItem.Data := Pointer(1)
-      else
-        ListItem.Data := nil;
-    end;
-  finally
-    for I := 0 to Entries.Count - 1 do
-      TObject(Entries[I]).Free;
-    Entries.Free;
-    FListView.Items.EndUpdate;
-  end;
+  FeedListUtils.LoadFeedItemsIntoList(FListView, FFeedItemsDb, FReadStatusDb, AURL, IsYouTubeFeed, @DebugLog);
 end;
 
 procedure TFormMain.MarkFeedItemsAsNotSeen(const AURL: string);
@@ -1223,42 +1156,13 @@ begin
 end;
 
 procedure TFormMain.MarkAllItemsAsRead(const AFeedURL: string);
-var
-  i: Integer;
-  ItemLink, ItemKey: string;
 begin
 {$IFDEF RSSREADER_DEBUG}
   FDebugLog.Clear;
 {$ENDIF}
-  DebugLog('=== Mark All As Read Debug ===');
-  DebugLog(Format('Feed URL parameter: "%s"', [AFeedURL]));
-  DebugLog('Total items: ' + IntToStr(FListView.Items.Count));
-  DebugLog('');
+  FeedListUtils.MarkAllListItemsAsRead(FListView, FReadStatusDb, AFeedURL, @DebugLog);
 
-  // Mark all items in the current ListView as read
-  for i := 0 to FListView.Items.Count - 1 do
-  begin
-    if FListView.Items[i].SubItems.Count > 2 then
-    begin
-      ItemLink := FListView.Items[i].SubItems[2];
-      if FListView.Items[i].SubItems.Count > 3 then
-        ItemKey := FListView.Items[i].SubItems[3]
-      else
-        ItemKey := ItemLink;
-      DebugLog(Format('[%d] Key: %s', [i, ItemKey]));
-      MarkItemAsRead(AFeedURL, ItemKey, ItemLink);
-      FListView.Items[i].Data := nil; // Mark as read visually
-    end
-    else
-    begin
-      DebugLog(Format('[%d] SKIPPED: SubItems.Count=%d (need >2)',
-                           [i, FListView.Items[i].SubItems.Count]));
-    end;
-  end;
-
-  // Show debug log
 {$IFDEF RSSREADER_DEBUG}
-
   ShowMessage(FDebugLog.Text);
 {$ENDIF}
 
