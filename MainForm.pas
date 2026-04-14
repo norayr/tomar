@@ -89,12 +89,6 @@ type
     procedure MarkItemAsRead(const AFeedURL, AItemKey: string; const ALegacyLink: string = '');
     procedure MarkAllItemsAsRead(const AFeedURL: string);
     function GetUnreadCount(const AFeedURL: string): Integer;
-    procedure UpdateFeedNodeText(Node: TTreeNode);
-    procedure UpdateAllFeedNodeTexts;
-    function BuildReadKeyCache: TStringList;
-    function FindCountIndex(ACounts: TStringList; const AFeedURL: string): Integer;
-    function GetCountValue(ACounts: TStringList; const AFeedURL: string): Integer;
-    procedure IncrementCountValue(ACounts: TStringList; const AFeedURL: string);
 
     function ConvertYouTubeURLToFeed(const AUrl: string): string;
   public
@@ -109,7 +103,7 @@ implementation
 {$R *.lfm}
 
 uses
-  LCLType, LCLIntf, RssUtils, FeedDbUtils;
+  LCLType, LCLIntf, RssUtils, FeedDbUtils, FeedTreeUtils;
   //FeedDBCleanup;
 
 
@@ -161,7 +155,7 @@ begin
   // end of test cleanup
   CreateControls;
   LoadFeedList;
-  UpdateAllFeedNodeTexts;
+  FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
 end;
 
 procedure TFormMain.FormDestroy(Sender: TObject);
@@ -506,7 +500,7 @@ begin
               FListView.Invalidate;
               FListView.Update;
             // Update tree node text
-            UpdateFeedNodeText(FTreeView.Selected);
+            FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb);
           end;
         end;
       end;
@@ -748,7 +742,7 @@ begin
       MarkItemAsRead(FeedURL, ItemKey, ItemLink);
       Item.Data := nil; // Mark as read in ListView
       // Update tree node text
-      UpdateFeedNodeText(FTreeView.Selected);
+      FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb);
     end;
 
   finally
@@ -1054,7 +1048,7 @@ begin
       else
         FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an item to view its content.</p></body></html>');
 
-      UpdateAllFeedNodeTexts;
+      FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
 
       FLoadingFeed := False;
 
@@ -1268,132 +1262,12 @@ begin
   ShowMessage(FDebugLog.Text);
 {$ENDIF}
 
-  UpdateAllFeedNodeTexts;
-end;
-
-function TFormMain.BuildReadKeyCache: TStringList;
-begin
-  Result := FeedDbUtils.BuildReadKeyCache(FReadStatusDb);
-end;
-
-function TFormMain.FindCountIndex(ACounts: TStringList; const AFeedURL: string): Integer;
-begin
-  Result := FeedDbUtils.FindCountIndex(ACounts, AFeedURL);
-end;
-
-function TFormMain.GetCountValue(ACounts: TStringList; const AFeedURL: string): Integer;
-begin
-  Result := FeedDbUtils.GetCountValue(ACounts, AFeedURL);
-end;
-
-procedure TFormMain.IncrementCountValue(ACounts: TStringList; const AFeedURL: string);
-begin
-  FeedDbUtils.IncrementCountValue(ACounts, AFeedURL);
+  FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
 end;
 
 function TFormMain.GetUnreadCount(const AFeedURL: string): Integer;
 begin
   Result := FeedDbUtils.GetUnreadCount(FFeedItemsDb, FReadStatusDb, AFeedURL);
-end;
-
-procedure TFormMain.UpdateAllFeedNodeTexts;
-var
-  i, UnreadCount: Integer;
-  Node: TTreeNode;
-  NodeData: TFeedNodeData;
-  BaseText, FeedURL, LinkValue, ItemKeyValue, ReadKey1, ReadKey2: string;
-  ReadKeys, Counts: TStringList;
-begin
-  if not Assigned(FTreeView) then
-    Exit;
-  if not Assigned(FFeedItemsDb) or not FFeedItemsDb.Active then
-    Exit;
-
-  ReadKeys := BuildReadKeyCache;
-  Counts := TStringList.Create;
-  try
-    { Feed URLs can contain '=' and other characters, and we update entries in-place,
-      so keep this list unsorted and do our own lookup. }
-    Counts.Sorted := False;
-    Counts.Duplicates := dupAccept;
-
-    if FFeedItemsDb.RecordCount > 0 then
-    begin
-      FFeedItemsDb.First;
-      while not FFeedItemsDb.EOF do
-      begin
-        FeedURL := FFeedItemsDb.FieldByName('FEEDURL').AsString;
-        LinkValue := FFeedItemsDb.FieldByName('LINK').AsString;
-        ItemKeyValue := FFeedItemsDb.FieldByName('ITEMKEY').AsString;
-
-        ReadKey1 := FeedURL + #9 + ItemKeyValue;
-        ReadKey2 := FeedURL + #9 + LinkValue;
-        if (ReadKeys.IndexOf(ReadKey1) < 0) and
-           ((LinkValue = '') or (ReadKeys.IndexOf(ReadKey2) < 0)) then
-        begin
-          IncrementCountValue(Counts, FeedURL);
-        end;
-
-        FFeedItemsDb.Next;
-      end;
-    end;
-
-    FTreeView.Items.BeginUpdate;
-    try
-      for i := 0 to FTreeView.Items.Count - 1 do
-      begin
-        Node := FTreeView.Items[i];
-        if Assigned(Node) and Assigned(Node.Data) then
-        begin
-          NodeData := TFeedNodeData(Node.Data);
-          if Assigned(NodeData) and (not NodeData.IsFolder) then
-          begin
-            BaseText := Node.Text;
-            if Pos(' (', BaseText) > 0 then
-              BaseText := Copy(BaseText, 1, Pos(' (', BaseText) - 1);
-
-            UnreadCount := GetCountValue(Counts, NodeData.FeedURL);
-            if UnreadCount > 0 then
-              Node.Text := BaseText + ' (' + IntToStr(UnreadCount) + ')'
-            else
-              Node.Text := BaseText;
-          end;
-        end;
-      end;
-    finally
-      FTreeView.Items.EndUpdate;
-    end;
-
-    FTreeView.Invalidate;
-  finally
-    Counts.Free;
-    ReadKeys.Free;
-  end;
-end;
-
-procedure TFormMain.UpdateFeedNodeText(Node: TTreeNode);
-var
-  NodeData: TFeedNodeData;
-  UnreadCount: Integer;
-  BaseText: string;
-begin
-  if not Assigned(Node) then
-    Exit;
-
-  NodeData := TFeedNodeData(Node.Data);
-  if not Assigned(NodeData) or NodeData.IsFolder then
-    Exit;
-
-  UnreadCount := GetUnreadCount(NodeData.FeedURL);
-
-  BaseText := Node.Text;
-  if Pos(' (', BaseText) > 0 then
-    BaseText := Copy(BaseText, 1, Pos(' (', BaseText) - 1);
-
-  if UnreadCount > 0 then
-    Node.Text := BaseText + ' (' + IntToStr(UnreadCount) + ')'
-  else
-    Node.Text := BaseText;
 end;
 
 procedure TFormMain.MenuMarkAllReadClick(Sender: TObject);
