@@ -18,6 +18,7 @@
         <ComponentName Value="FormMain"/>
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
+        <IsVisibleTab Value="True"/>
         <TopLine Value="30"/>
         <CursorPos X="59" Y="42"/>
         <UsageCount Value="92"/>
@@ -86,9 +87,8 @@
       </Unit>
       <Unit>
         <Filename Value="HtmlProvider.pas"/>
-        <IsVisibleTab Value="True"/>
         <EditorIndex Value="1"/>
-        <CursorPos X="59" Y="8"/>
+        <CursorPos X="140" Y="13"/>
         <UsageCount Value="10"/>
         <Loaded Value="True"/>
       </Unit>

@@ -10,7 +10,7 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
   ExtCtrls, Menus, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
-  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider;
+  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils;
 
 type
   TFeedNodeData = class
@@ -1164,10 +1164,6 @@ end;
 procedure TFormMain.LoadRSSFeed(const AURL: string);
 var
   Response: string;
-  Doc: TXMLDocument;
-  ItemNode, ChildNode: TDOMNode;
-  Title, Link, Description, PubDate, VideoId, GuidText, IdText, ItemKey: string;
-  Stream: TStringStream;
   IsYouTubeFeed: Boolean;
 begin
 {$IFDEF RSSREADER_DEBUG}
@@ -1198,147 +1194,34 @@ begin
       end;
     end;
 
-    Stream := TStringStream.Create(Response);
     try
-      ReadXMLFile(Doc, Stream);
-      try
-        IsYouTubeFeed := False;
-        if Assigned(Doc.DocumentElement) then
-        begin
-          if (Doc.DocumentElement.FindNode('yt:channelId') <> nil) or
-             (Pos('youtube.com', AURL) > 0) then
-            IsYouTubeFeed := True;
-        end;
+      ParseFeedResponse(AURL, Response, @MarkFeedItemsAsNotSeen, @SaveOrUpdateFeedItem, IsYouTubeFeed);
 
-        MarkFeedItemsAsNotSeen(AURL);
+      LoadFeedItemsFromDb(AURL, IsYouTubeFeed);
 
-        ItemNode := Doc.DocumentElement.FindNode('channel');
-        if not Assigned(ItemNode) then
-          ItemNode := Doc.DocumentElement;
+      if FListView.Items.Count = 0 then
+        FHtmlPanel.SetHTMLFromStr('<html><body><p>No items found in feed.</p></body></html>')
+      else
+        FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an item to view its content.</p></body></html>');
 
-        ItemNode := ItemNode.FirstChild;
-        while Assigned(ItemNode) do
-        begin
-          if ItemNode.NodeName = 'item' then
-          begin
-            Title := '';
-            Link := '';
-            Description := '';
-            PubDate := '';
-            GuidText := '';
-            IdText := '';
+      UpdateAllFeedNodeTexts;
 
-            ChildNode := ItemNode.FirstChild;
-            while Assigned(ChildNode) do
-            begin
-              if ChildNode.NodeName = 'title' then
-                Title := ChildNode.TextContent
-              else if ChildNode.NodeName = 'link' then
-                Link := ChildNode.TextContent
-              else if (ChildNode.NodeName = 'description') or
-                      (ChildNode.NodeName = 'content:encoded') then
-                Description := ChildNode.TextContent
-              else if ChildNode.NodeName = 'pubDate' then
-                PubDate := ChildNode.TextContent
-              else if ChildNode.NodeName = 'guid' then
-                GuidText := ChildNode.TextContent;
-
-              ChildNode := ChildNode.NextSibling;
-            end;
-
-            ItemKey := MakeItemKey(GuidText, IdText, Link, Title, PubDate);
-
-            if IsYouTubeFeed then
-              SaveOrUpdateFeedItem(AURL, ItemKey, Title, PubDate, Link, Link)
-            else
-              SaveOrUpdateFeedItem(AURL, ItemKey, Title, PubDate, Description, Link);
-          end
-          else if ItemNode.NodeName = 'entry' then
-          begin
-            Title := '';
-            Link := '';
-            Description := '';
-            PubDate := '';
-            VideoId := '';
-            GuidText := '';
-            IdText := '';
-
-            ChildNode := ItemNode.FirstChild;
-            while Assigned(ChildNode) do
-            begin
-              if ChildNode.NodeName = 'title' then
-                Title := ChildNode.TextContent
-              else if ChildNode.NodeName = 'link' then
-              begin
-                if Assigned(ChildNode.Attributes) and (ChildNode.Attributes.GetNamedItem('rel') <> nil) then
-                begin
-                  if ChildNode.Attributes.GetNamedItem('rel').NodeValue = 'alternate' then
-                  begin
-                    if ChildNode.Attributes.GetNamedItem('href') <> nil then
-                      Link := ChildNode.Attributes.GetNamedItem('href').NodeValue;
-                  end;
-                end
-                else if Assigned(ChildNode.Attributes) and (ChildNode.Attributes.GetNamedItem('href') <> nil) then
-                  Link := ChildNode.Attributes.GetNamedItem('href').NodeValue;
-              end
-              else if ChildNode.NodeName = 'yt:videoId' then
-                VideoId := ChildNode.TextContent
-              else if (ChildNode.NodeName = 'summary') or
-                      (ChildNode.NodeName = 'content') then
-                Description := ChildNode.TextContent
-              else if (ChildNode.NodeName = 'published') or
-                      (ChildNode.NodeName = 'updated') then
-                PubDate := ChildNode.TextContent
-              else if ChildNode.NodeName = 'id' then
-                IdText := ChildNode.TextContent;
-
-              ChildNode := ChildNode.NextSibling;
-            end;
-
-            if IsYouTubeFeed and (Link = '') and (VideoId <> '') then
-              Link := 'https://www.youtube.com/watch?v=' + VideoId;
-
-            ItemKey := MakeItemKey(GuidText, IdText, Link, Title, PubDate);
-
-            if IsYouTubeFeed then
-              SaveOrUpdateFeedItem(AURL, ItemKey, Title, PubDate, Link, Link)
-            else
-              SaveOrUpdateFeedItem(AURL, ItemKey, Title, PubDate, Description, Link);
-          end;
-
-          ItemNode := ItemNode.NextSibling;
-        end;
-
-        LoadFeedItemsFromDb(AURL, IsYouTubeFeed);
-
-        if FListView.Items.Count = 0 then
-          FHtmlPanel.SetHTMLFromStr('<html><body><p>No items found in feed.</p></body></html>')
-        else
-          FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an item to view its content.</p></body></html>');
-
-        UpdateAllFeedNodeTexts;
-
-        FLoadingFeed := False;
-
-        DebugLog('');
-        DebugLog('=== Load Complete ===');
-        DebugLog('Total items loaded from DB: ' + IntToStr(FListView.Items.Count));
-        DebugLog('Unread items: ' + IntToStr(GetUnreadCount(AURL)));
-
-      finally
-        Doc.Free;
-      end;
-    finally
-      Stream.Free;
-    end;
-  except
-    on E: Exception do
-    begin
       FLoadingFeed := False;
-      ShowMessage('Error loading feed: ' + E.Message);
-      FHtmlPanel.SetHTMLFromStr('<html><body><p style="color:red;">Error loading feed: ' +
-                                E.Message + '</p></body></html>');
+
+      DebugLog('');
+      DebugLog('=== Load Complete ===');
+      DebugLog('Total items loaded from DB: ' + IntToStr(FListView.Items.Count));
+      DebugLog('Unread items: ' + IntToStr(GetUnreadCount(AURL)));
+    except
+      on E: Exception do
+      begin
+        FLoadingFeed := False;
+        ShowMessage('Error loading feed: ' + E.Message);
+        FHtmlPanel.SetHTMLFromStr('<html><body><p style="color:red;">Error loading feed: ' +
+                                  E.Message + '</p></body></html>');
+      end;
     end;
+  finally
   end;
 end;
 
@@ -1426,16 +1309,7 @@ end;
 
 function TFormMain.MakeItemKey(const AGuid, AId, ALink, ATitle, APubDate: string): string;
 begin
-  if Trim(AGuid) <> '' then
-    Exit(Copy(Trim(AGuid), 1, 255));
-
-  if Trim(AId) <> '' then
-    Exit(Copy(Trim(AId), 1, 255));
-
-  if Trim(ALink) <> '' then
-    Exit(Copy(Trim(ALink), 1, 255));
-
-  Result := Copy(Trim(ATitle) + '|' + Trim(APubDate), 1, 255);
+  Result := FeedFetchUtils.MakeItemKey(AGuid, AId, ALink, ATitle, APubDate);
 end;
 
 function TFormMain.GetSelectedNodeData: TFeedNodeData;
@@ -1750,145 +1624,8 @@ begin
 end;
 
 function TFormMain.ConvertYouTubeURLToFeed(const AUrl: string): string;
-var
-  ChannelId: string;
-  PageSource: string;
-  Stream: TStringStream;
-  PosStart, PosEnd: Integer;
-  CleanUrl: string;
 begin
-  Result := AUrl;
-
-  // If it's already a feed URL, return as-is
-  if Pos('feeds/videos.xml', AUrl) > 0 then
-    Exit;
-
-  // Check if it's a YouTube URL
-  if (Pos('youtube.com', LowerCase(AUrl)) = 0) and
-     (Pos('youtu.be', LowerCase(AUrl)) = 0) then
-    Exit;
-
-  // Clean URL - remove query parameters and trailing slashes for parsing
-  CleanUrl := AUrl;
-  PosStart := Pos('?', CleanUrl);   // yt feeds contain '?'
-  if PosStart > 0 then
-    CleanUrl := Copy(CleanUrl, 1, PosStart - 1);
-  while (Length(CleanUrl) > 0) and (CleanUrl[Length(CleanUrl)] = '/') do
-    Delete(CleanUrl, Length(CleanUrl), 1);
-
-  // Case 1: /channel/CHANNEL_ID format
-  PosStart := Pos('/channel/', CleanUrl);
-  if PosStart > 0 then
-  begin
-    ChannelId := Copy(CleanUrl, PosStart + 9, Length(CleanUrl));
-    // Extract just the channel ID (stop at next slash if any)
-    PosEnd := Pos('/', ChannelId);
-    if PosEnd > 0 then
-      ChannelId := Copy(ChannelId, 1, PosEnd - 1);
-
-    if ChannelId <> '' then
-    begin
-      Result := 'https://www.youtube.com/feeds/videos.xml?channel_id=' + ChannelId;
-      Exit;
-    end;
-  end;
-
-  // Case 2: /@handle or /user/USERNAME format - need to fetch page
-  if (Pos('/@', CleanUrl) > 0) or (Pos('/user/', CleanUrl) > 0) or
-     (Pos('/c/', CleanUrl) > 0) then
-  begin
-    Stream := TStringStream.Create('');
-    try
-      try
-        // Fetch the channel page
-        FHttpClient.Get(AUrl, Stream);
-        PageSource := Stream.DataString;
-
-        // PRIORITY 1: Look for RSS feed link in <head> section (most reliable)
-        // Pattern: <link rel="alternate" type="application/rss+xml" ... href="https://www.youtube.com/feeds/videos.xml?channel_id=CHANNEL_ID">
-        PosStart := Pos('rel="alternate" type="application/rss+xml"', PageSource);
-        if PosStart > 0 then
-        begin
-          // Find the href attribute after this
-          PosStart := Pos('href="', PageSource, PosStart);
-          if PosStart > 0 then
-          begin
-            PosStart := PosStart + 6; // Length of 'href="'
-            PosEnd := PosStart;
-            while (PosEnd <= Length(PageSource)) and (PageSource[PosEnd] <> '"') do
-              Inc(PosEnd);
-            Result := Copy(PageSource, PosStart, PosEnd - PosStart);
-            // We already have the complete feed URL, so we're done
-            if Pos('feeds/videos.xml?channel_id=', Result) > 0 then
-              Exit;
-          end;
-        end;
-
-        // PRIORITY 2: Look for canonical URL in <head> section (also very reliable)
-        // Pattern: <link rel="canonical" href="https://www.youtube.com/channel/CHANNEL_ID">
-        PosStart := Pos('rel="canonical"', PageSource);
-        if PosStart > 0 then
-        begin
-          PosStart := Pos('href="', PageSource, PosStart);
-          if PosStart > 0 then
-          begin
-            PosStart := PosStart + 6; // Length of 'href="'
-            PosEnd := PosStart;
-            while (PosEnd <= Length(PageSource)) and (PageSource[PosEnd] <> '"') do
-              Inc(PosEnd);
-            ChannelId := Copy(PageSource, PosStart, PosEnd - PosStart);
-            // Extract channel ID from the canonical URL
-            PosStart := Pos('/channel/', ChannelId);
-            if PosStart > 0 then
-            begin
-              ChannelId := Copy(ChannelId, PosStart + 9, Length(ChannelId));
-              Result := 'https://www.youtube.com/feeds/videos.xml?channel_id=' + ChannelId;
-              Exit;
-            end;
-          end;
-        end;
-
-        // FALLBACK: Search for channel_id in page source (less reliable, kept for backwards compatibility)
-        // Only use this if the more reliable methods above failed
-        PosStart := Pos('"channelId":"', PageSource);
-        if PosStart > 0 then
-        begin
-          PosStart := PosStart + 13; // Length of '"channelId":"'
-          PosEnd := PosStart;
-          while (PosEnd <= Length(PageSource)) and (PageSource[PosEnd] <> '"') do
-            Inc(PosEnd);
-          ChannelId := Copy(PageSource, PosStart, PosEnd - PosStart);
-        end
-        else
-        begin
-          // Try alternate pattern
-          PosStart := Pos('channel_id=', PageSource);
-          if PosStart > 0 then
-          begin
-            PosStart := PosStart + 11; // Length of 'channel_id='
-            PosEnd := PosStart;
-            while (PosEnd <= Length(PageSource)) and
-                  (PageSource[PosEnd] in ['A'..'Z', 'a'..'z', '0'..'9', '_', '-']) do
-              Inc(PosEnd);
-            ChannelId := Copy(PageSource, PosStart, PosEnd - PosStart);
-          end;
-        end;
-
-        if ChannelId <> '' then
-          Result := 'https://www.youtube.com/feeds/videos.xml?channel_id=' + ChannelId;
-
-      except
-        on E: Exception do
-        begin
-          // If fetching fails, return original URL
-          // User will get an error when trying to load it as a feed
-          Result := AUrl;
-        end;
-      end;
-    finally
-      Stream.Free;
-    end;
-  end;
+  Result := FeedFetchUtils.ConvertYouTubeURLToFeed(FHttpClient, AUrl);
 end;
 
 
