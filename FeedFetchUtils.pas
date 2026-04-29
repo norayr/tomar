@@ -20,6 +20,43 @@ procedure ParseFeedResponse(const AURL, Response: string;
 
 implementation
 
+function NodeNameMatches(ANode: TDOMNode; const AName: string): Boolean;
+var
+  N: string;
+  P: Integer;
+begin
+  Result := False;
+  if not Assigned(ANode) then
+    Exit;
+
+  N := LowerCase(ANode.NodeName);
+  if N = LowerCase(AName) then
+    Exit(True);
+
+  P := Pos(':', N);
+  if P > 0 then
+    N := Copy(N, P + 1, MaxInt);
+
+  Result := N = LowerCase(AName);
+end;
+
+function DirectChildText(AParent: TDOMNode; const AName: string): string;
+var
+  Child: TDOMNode;
+begin
+  Result := '';
+  if not Assigned(AParent) then
+    Exit;
+
+  Child := AParent.FirstChild;
+  while Assigned(Child) do
+  begin
+    if NodeNameMatches(Child, AName) then
+      Exit(Trim(Child.TextContent));
+    Child := Child.NextSibling;
+  end;
+end;
+
 function MakeItemKey(const AGuid, AId, ALink, ATitle, APubDate: string): string;
 begin
   if Trim(AGuid) <> '' then
@@ -219,6 +256,16 @@ begin
             ChildNode := ChildNode.NextSibling;
           end;
 
+          { Choose the date only after scanning all children.
+            RSS: pubDate is publication date; updated/dc:date/date are fallbacks. }
+          PubDate := DirectChildText(ItemNode, 'pubDate');
+          if PubDate = '' then
+            PubDate := DirectChildText(ItemNode, 'dc:date');
+          if PubDate = '' then
+            PubDate := DirectChildText(ItemNode, 'date');
+          if PubDate = '' then
+            PubDate := DirectChildText(ItemNode, 'updated');
+
           ItemKey := MakeItemKey(GuidText, IdText, Link, Title, PubDate);
 
           if Assigned(ASaveFeedItem) then
@@ -272,9 +319,11 @@ begin
 
             ChildNode := ChildNode.NextSibling;
           end;
-
+          { Atom/YouTube: published is the publication date and must win over
+            updated, because YouTube changes updated when metadata changes. }
+          PubDate := DirectChildText(ItemNode, 'published');
           if PubDate = '' then
-            PubDate := UpdatedDate;
+            PubDate := DirectChildText(ItemNode, 'updated');
 
           if IsYouTubeFeed and (Link = '') and (VideoId <> '') then
             Link := 'https://www.youtube.com/watch?v=' + VideoId;

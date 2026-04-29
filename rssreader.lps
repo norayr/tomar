@@ -7,7 +7,7 @@
       <Unit>
         <Filename Value="rssreader.lpr"/>
         <IsPartOfProject Value="True"/>
-        <EditorIndex Value="3"/>
+        <EditorIndex Value="4"/>
         <CursorPos X="3" Y="12"/>
         <UsageCount Value="93"/>
         <Loaded Value="True"/>
@@ -18,9 +18,8 @@
         <ComponentName Value="FormMain"/>
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
-        <IsVisibleTab Value="True"/>
-        <TopLine Value="32"/>
-        <CursorPos X="142" Y="61"/>
+        <TopLine Value="34"/>
+        <CursorPos X="24" Y="45"/>
         <UsageCount Value="93"/>
         <Loaded Value="True"/>
         <LoadedDesigner Value="True"/>
@@ -80,16 +79,24 @@
       </Unit>
       <Unit>
         <Filename Value="/usr/lib/fpc/3.2.2/source/packages/fcl-db/src/dbase/dbf.pas"/>
-        <EditorIndex Value="2"/>
+        <EditorIndex Value="3"/>
         <CursorPos X="71" Y="28"/>
         <UsageCount Value="14"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="HtmlProvider.pas"/>
-        <EditorIndex Value="1"/>
+        <EditorIndex Value="2"/>
         <CursorPos X="140" Y="13"/>
         <UsageCount Value="11"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="FeedFetchUtils.pas"/>
+        <IsVisibleTab Value="True"/>
+        <EditorIndex Value="1"/>
+        <CursorPos X="17" Y="24"/>
+        <UsageCount Value="10"/>
         <Loaded Value="True"/>
       </Unit>
     </Units>
