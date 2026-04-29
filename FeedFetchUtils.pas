@@ -161,7 +161,7 @@ procedure ParseFeedResponse(const AURL, Response: string;
 var
   Doc: TXMLDocument;
   ItemNode, ChildNode: TDOMNode;
-  Title, Link, Description, PubDate, VideoId, GuidText, IdText, ItemKey: string;
+  Title, Link, Description, PubDate, UpdatedDate, VideoId, GuidText, IdText, ItemKey: string;
   Stream: TStringStream;
 begin
   Stream := TStringStream.Create(Response);
@@ -192,6 +192,7 @@ begin
           Link := '';
           Description := '';
           PubDate := '';
+          UpdatedDate := '';
           GuidText := '';
           IdText := '';
 
@@ -206,6 +207,11 @@ begin
                     (ChildNode.NodeName = 'content:encoded') then
               Description := ChildNode.TextContent
             else if ChildNode.NodeName = 'pubDate' then
+              PubDate := ChildNode.TextContent
+            else if (PubDate = '') and
+                    ((ChildNode.NodeName = 'dc:date') or
+                     (ChildNode.NodeName = 'date') or
+                     (ChildNode.NodeName = 'updated')) then
               PubDate := ChildNode.TextContent
             else if ChildNode.NodeName = 'guid' then
               GuidText := ChildNode.TextContent;
@@ -229,6 +235,7 @@ begin
           Link := '';
           Description := '';
           PubDate := '';
+          UpdatedDate := '';
           VideoId := '';
           GuidText := '';
           IdText := '';
@@ -256,14 +263,18 @@ begin
             else if (ChildNode.NodeName = 'summary') or
                     (ChildNode.NodeName = 'content') then
               Description := ChildNode.TextContent
-            else if (ChildNode.NodeName = 'published') or
-                    (ChildNode.NodeName = 'updated') then
+            else if ChildNode.NodeName = 'published' then
               PubDate := ChildNode.TextContent
+            else if ChildNode.NodeName = 'updated' then
+              UpdatedDate := ChildNode.TextContent
             else if ChildNode.NodeName = 'id' then
               IdText := ChildNode.TextContent;
 
             ChildNode := ChildNode.NextSibling;
           end;
+
+          if PubDate = '' then
+            PubDate := UpdatedDate;
 
           if IsYouTubeFeed and (Link = '') and (VideoId <> '') then
             Link := 'https://www.youtube.com/watch?v=' + VideoId;
