@@ -219,6 +219,8 @@ end;
 procedure TFormMain.CreateControls;
 var
   LeftPanel, RightPanel, TopPanel, BottomPanel: TPanel;
+  LeftToolbar: TPanel;
+  BtnAddFeed, BtnAddFolder, BtnRefreshAll: TButton;
   MenuItem: TMenuItem;
 begin
   // Left Panel with TreeView
@@ -229,6 +231,41 @@ begin
   LeftPanel.Caption := '';
   LeftPanel.BevelOuter := bvNone;
   LeftPanel.Constraints.MinWidth := 120;
+
+  // Touch-friendly toolbar for empty/narrow tree pane.
+  LeftToolbar := TPanel.Create(Self);
+  LeftToolbar.Parent := LeftPanel;
+  LeftToolbar.Align := alTop;
+  LeftToolbar.Height := 42;
+  LeftToolbar.Caption := '';
+  LeftToolbar.BevelOuter := bvNone;
+
+  BtnAddFeed := TButton.Create(Self);
+  BtnAddFeed.Parent := LeftToolbar;
+  BtnAddFeed.Align := alLeft;
+  BtnAddFeed.Width := 58;
+  BtnAddFeed.Caption := '＋📰';
+  BtnAddFeed.Hint := 'Add feed';
+  BtnAddFeed.ShowHint := True;
+  BtnAddFeed.OnClick := @MenuAddFeedClick;
+
+  BtnAddFolder := TButton.Create(Self);
+  BtnAddFolder.Parent := LeftToolbar;
+  BtnAddFolder.Align := alLeft;
+  BtnAddFolder.Width := 58;
+  BtnAddFolder.Caption := '＋📁';
+  BtnAddFolder.Hint := 'Add folder';
+  BtnAddFolder.ShowHint := True;
+  BtnAddFolder.OnClick := @MenuAddFolderClick;
+
+  BtnRefreshAll := TButton.Create(Self);
+  BtnRefreshAll.Parent := LeftToolbar;
+  BtnRefreshAll.Align := alLeft;
+  BtnRefreshAll.Width := 48;
+  BtnRefreshAll.Caption := '⟳';
+  BtnRefreshAll.Hint := 'Refresh all feeds';
+  BtnRefreshAll.ShowHint := True;
+  BtnRefreshAll.OnClick := @MenuRefreshAllClick;
 
   FTreeView := TTreeView.Create(Self);
   FTreeView.Parent := LeftPanel;
