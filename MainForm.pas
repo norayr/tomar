@@ -47,6 +47,8 @@ type
     FLongPressTimer: TTimer;
     FLongPressPoint: TPoint;
     FLongPressControl: TControl;  // Track which control triggered long press
+    FLastTreeTapNode: TTreeNode;
+    FLastTreeTapTime: TDateTime;
 
     FSplitter1, FSplitter2: TSplitter;
     FPopupMenu: TPopupMenu;
@@ -212,6 +214,8 @@ begin
   FInResize := False;
   FLastPortraitLayout := False;
   FLayoutInitialized := False;
+  FLastTreeTapNode := nil;
+  FLastTreeTapTime := 0;
   OnActivate := @FormActivate;
   OnResize := @FormResize;
 
@@ -759,8 +763,56 @@ end;
 
 procedure TFormMain.TreeViewMouseUp(Sender: TObject; Button: TMouseButton;
   Shift: TShiftState; X, Y: Integer);
+var
+  Node, UpNode: TTreeNode;
+  NodeData: TFeedNodeData;
+  TextRect: TRect;
+  NowTime: TDateTime;
 begin
   FLongPressTimer.Enabled := False;
+
+  if (Button <> mbLeft) or not Assigned(FTreeView) then
+    Exit;
+
+  { Treat a tap on the folder name as expand/collapse.  This is much
+    easier on touch screens than hitting the tiny expander mark. }
+  Node := FTreeView.GetNodeAt(FLongPressPoint.X, FLongPressPoint.Y);
+  UpNode := FTreeView.GetNodeAt(X, Y);
+  if (Node = nil) or (Node <> UpNode) then
+    Exit;
+
+  NodeData := nil;
+  if Assigned(Node.Data) then
+    NodeData := TFeedNodeData(Node.Data);
+
+  if not (Assigned(NodeData) and NodeData.IsFolder and (Node.Count > 0)) then
+    Exit;
+
+  { Only toggle when the tap is on/near the text label, not merely on empty
+    space in the row.  The small margin helps with fingers/stylus taps. }
+  TextRect := Node.DisplayRect(True);
+  if not ((FLongPressPoint.X >= TextRect.Left - 12) and
+          (FLongPressPoint.X <= TextRect.Right + 24) and
+          (FLongPressPoint.Y >= TextRect.Top - 4) and
+          (FLongPressPoint.Y <= TextRect.Bottom + 4)) then
+    Exit;
+
+  { Ignore the second event of a quick double-tap, otherwise a double-tap
+    would expand and immediately collapse the same folder again. }
+  NowTime := Now;
+  if (FLastTreeTapNode = Node) and
+     (FLastTreeTapTime > 0) and
+     (MilliSecondsBetween(NowTime, FLastTreeTapTime) < 650) then
+    Exit;
+
+  FLastTreeTapNode := Node;
+  FLastTreeTapTime := NowTime;
+
+  FTreeView.Selected := Node;
+  if Node.Expanded then
+    Node.Collapse(False)
+  else
+    Node.Expand(False);
 end;
 
 procedure TFormMain.TreeViewMouseMove(Sender: TObject; Shift: TShiftState;
@@ -776,30 +828,9 @@ end;
 
 
 procedure TFormMain.TreeViewDblClick(Sender: TObject);
-var
-  Node: TTreeNode;
-  NodeData: TFeedNodeData;
 begin
-  if not Assigned(FTreeView) then Exit;
-
-  Node := FTreeView.GetNodeAt(FLongPressPoint.X, FLongPressPoint.Y);
-  if Node = nil then Exit;
-
-  FTreeView.Selected := Node;
-
-  { On small touch screens the expander arrow is hard to hit.
-    Double-tapping anywhere on a folder row toggles it. }
-  NodeData := nil;
-  if Assigned(Node.Data) then
-    NodeData := TFeedNodeData(Node.Data);
-
-  if Assigned(NodeData) and NodeData.IsFolder and (Node.Count > 0) then
-  begin
-    if Node.Expanded then
-      Node.Collapse(False)
-    else
-      Node.Expand(False);
-  end;
+  { Folder expand/collapse is handled in TreeViewMouseUp.  Keeping this empty
+    so a double-tap does not toggle the same folder twice. }
 end;
 
 // HtmlPanel long-press handlers
