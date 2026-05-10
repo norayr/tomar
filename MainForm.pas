@@ -30,6 +30,8 @@ type
     FHtmlPopup: TPopupMenu;
     FWatchPanel: TPanel;
     FWatchButton: TButton;
+    FWatchHDButton: TButton;
+    FInstallYtDlpButton: TButton;
     FMpvProcess: TProcess;
     FMpvTimer: TTimer;
     FCurrentURL: string; // to track the link under mouse
@@ -82,6 +84,8 @@ type
        var Handled: Boolean);
     procedure MenuCopyLinkClick(Sender: TObject);
     procedure WatchButtonClick(Sender: TObject);
+    procedure WatchHDButtonClick(Sender: TObject);
+    procedure InstallYtDlpButtonClick(Sender: TObject);
     procedure MpvTimerTick(Sender: TObject);
 
     procedure MenuAddFolderClick(Sender: TObject);
@@ -114,8 +118,12 @@ type
 
     function ConvertYouTubeURLToFeed(const AUrl: string): string;
     function IsExecutableInPath(const ProgName: string): Boolean;
+    function UserYtDlpPath: string;
+    function FindYtDlpForPlayback: string;
     function CanWatchYouTubeLocally: Boolean;
     procedure SetWatchButtonURL(const AURL: string);
+    procedure SetWatchButtonsEnabled(AEnabled: Boolean);
+    procedure StartMpvWithFormat(const AFormat: string);
   public
 
   end;
@@ -491,9 +499,31 @@ begin
   FWatchButton := TButton.Create(Self);
   FWatchButton.Parent := FWatchPanel;
   FWatchButton.Align := alLeft;
-  FWatchButton.Width := 110;
-  FWatchButton.Caption := 'Watch';
+  FWatchButton.Width := 48;
+  FWatchButton.Left := 0;
+  FWatchButton.Caption := '📺';
+  FWatchButton.Hint := 'Watch, low quality / format 18';
+  FWatchButton.ShowHint := True;
   FWatchButton.OnClick := @WatchButtonClick;
+
+  FWatchHDButton := TButton.Create(Self);
+  FWatchHDButton.Parent := FWatchPanel;
+  FWatchHDButton.Align := alLeft;
+  FWatchHDButton.Width := 48;
+  FWatchHDButton.Left := FWatchButton.Left + FWatchButton.Width;
+  FWatchHDButton.Caption := '📽️';
+  FWatchHDButton.Hint := 'Watch, better quality / up to 720p';
+  FWatchHDButton.ShowHint := True;
+  FWatchHDButton.OnClick := @WatchHDButtonClick;
+
+  FInstallYtDlpButton := TButton.Create(Self);
+  FInstallYtDlpButton.Parent := FWatchPanel;
+  FInstallYtDlpButton.Align := alRight;
+  FInstallYtDlpButton.Width := 104;
+  FInstallYtDlpButton.Caption := '⬇ yt-dlp';
+  FInstallYtDlpButton.Hint := 'Install or update yt-dlp in ~/bin';
+  FInstallYtDlpButton.ShowHint := True;
+  FInstallYtDlpButton.OnClick := @InstallYtDlpButtonClick;
 
   FMpvTimer := TTimer.Create(Self);
   FMpvTimer.Interval := 1000;
@@ -714,7 +744,19 @@ begin
     Clipboard.AsText := FCurrentURL;
 end;
 
-procedure TFormMain.WatchButtonClick(Sender: TObject);
+procedure TFormMain.SetWatchButtonsEnabled(AEnabled: Boolean);
+begin
+  if Assigned(FWatchButton) then
+    FWatchButton.Enabled := AEnabled;
+  if Assigned(FWatchHDButton) then
+    FWatchHDButton.Enabled := AEnabled;
+  if Assigned(FInstallYtDlpButton) then
+    FInstallYtDlpButton.Enabled := AEnabled;
+end;
+
+procedure TFormMain.StartMpvWithFormat(const AFormat: string);
+var
+  YtDlpPath: string;
 begin
   if FCurrentVideoURL = '' then
     Exit;
@@ -722,30 +764,121 @@ begin
   if Assigned(FMpvProcess) and FMpvProcess.Running then
     Exit;
 
+  YtDlpPath := FindYtDlpForPlayback;
+  if YtDlpPath = '' then
+  begin
+    ShowMessage('yt-dlp was not found. Use the ⬇ yt-dlp button to install it into ~/bin.');
+    Exit;
+  end;
+
   FreeAndNil(FMpvProcess);
 
   FMpvProcess := TProcess.Create(nil);
   try
     FMpvProcess.Executable := 'mpv';
     FMpvProcess.Parameters.Add('--ytdl=yes');
-    FMpvProcess.Parameters.Add('--ytdl-format=18/best[height<=360]');
-    FMpvProcess.Parameters.Add('--ytdl-raw-options=cookies-from-browser=firefox:/home/inky/.librewolf/vifu5p28.default-release::youtube');
+    FMpvProcess.Parameters.Add('--script-opts=ytdl_hook-ytdl_path=' + YtDlpPath);
+    FMpvProcess.Parameters.Add('--ytdl-format=' + AFormat);
+    //FMpvProcess.Parameters.Add('--ytdl-raw-options=cookies-from-browser=firefox:/home/inky/.librewolf/vifu5p28.default-release::youtube');
     FMpvProcess.Parameters.Add('--cache=yes');
     FMpvProcess.Parameters.Add('--cache-secs=60');
     FMpvProcess.Parameters.Add(FCurrentVideoURL);
     FMpvProcess.Options := [];
 
-    FWatchButton.Enabled := False;
+    SetWatchButtonsEnabled(False);
     FMpvProcess.Execute;
     FMpvTimer.Enabled := True;
   except
     on E: Exception do
     begin
       FreeAndNil(FMpvProcess);
-      FWatchButton.Enabled := True;
+      SetWatchButtonsEnabled(True);
       ShowMessage('Could not start mpv: ' + E.Message);
     end;
   end;
+end;
+
+procedure TFormMain.WatchButtonClick(Sender: TObject);
+begin
+  { Low-quality button: prefer old progressive MP4 format 18,
+    then H.264 360p, then any 360p, then whatever yt-dlp can provide. }
+  StartMpvWithFormat('18/best[height<=360][vcodec^=avc1]/best[height<=360]/best');
+end;
+
+procedure TFormMain.WatchHDButtonClick(Sender: TObject);
+begin
+  { Better-quality button: prefer H.264 up to 720p with M4A audio.
+    Old phones may still struggle, but the user explicitly chose this. }
+  StartMpvWithFormat('bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=720][vcodec^=avc1]/best[height<=720]/18/best');
+end;
+
+procedure TFormMain.InstallYtDlpButtonClick(Sender: TObject);
+const
+  YtDlpURL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
+var
+  HomeDir, BinDir, DestFile, TmpFile: string;
+  Client: TFPHTTPClient;
+  Stream: TFileStream;
+begin
+  HomeDir := GetEnvironmentVariable('HOME');
+  if HomeDir = '' then
+  begin
+    ShowMessage('Cannot find HOME, so I do not know where ~/bin is.');
+    Exit;
+  end;
+
+  BinDir := IncludeTrailingPathDelimiter(HomeDir) + 'bin';
+  DestFile := IncludeTrailingPathDelimiter(BinDir) + 'yt-dlp';
+  TmpFile := DestFile + '.tmp';
+
+  if not ForceDirectories(BinDir) then
+  begin
+    ShowMessage('Could not create ' + BinDir);
+    Exit;
+  end;
+
+  if Assigned(FInstallYtDlpButton) then
+    FInstallYtDlpButton.Enabled := False;
+  try
+    if FileExists(TmpFile) then
+      DeleteFile(TmpFile);
+
+    Client := TFPHTTPClient.Create(nil);
+    try
+      Client.AllowRedirect := True;
+      Stream := TFileStream.Create(TmpFile, fmCreate);
+      try
+        Client.Get(YtDlpURL, Stream);
+      finally
+        Stream.Free;
+      end;
+    finally
+      Client.Free;
+    end;
+
+    if fpChmod(PChar(TmpFile), S_IRUSR or S_IWUSR or S_IXUSR or
+      S_IRGRP or S_IXGRP or S_IROTH or S_IXOTH) <> 0 then
+      raise Exception.Create('Could not chmod ' + TmpFile);
+
+    if FileExists(DestFile) then
+      DeleteFile(DestFile);
+    if not RenameFile(TmpFile, DestFile) then
+      raise Exception.Create('Could not move ' + TmpFile + ' to ' + DestFile);
+
+    FYoutubePlayerAvailable := CanWatchYouTubeLocally;
+    SetWatchButtonURL(FCurrentVideoURL);
+    ShowMessage('Installed yt-dlp to ' + DestFile);
+  except
+    on E: Exception do
+    begin
+      if FileExists(TmpFile) then
+        DeleteFile(TmpFile);
+      ShowMessage('Could not install yt-dlp: ' + E.Message);
+    end;
+  end;
+
+  if Assigned(FInstallYtDlpButton) then
+    FInstallYtDlpButton.Enabled := True;
 end;
 
 procedure TFormMain.MpvTimerTick(Sender: TObject);
@@ -753,8 +886,7 @@ begin
   if not Assigned(FMpvProcess) then
   begin
     FMpvTimer.Enabled := False;
-    if Assigned(FWatchButton) then
-      FWatchButton.Enabled := True;
+    SetWatchButtonsEnabled(True);
     Exit;
   end;
 
@@ -762,8 +894,7 @@ begin
   begin
     FMpvTimer.Enabled := False;
     FreeAndNil(FMpvProcess);
-    if Assigned(FWatchButton) then
-      FWatchButton.Enabled := True;
+    SetWatchButtonsEnabled(True);
   end;
 end;
 
@@ -802,19 +933,49 @@ begin
   end;
 end;
 
+function TFormMain.UserYtDlpPath: string;
+var
+  HomeDir: string;
+begin
+  HomeDir := GetEnvironmentVariable('HOME');
+  if HomeDir = '' then
+    Result := ''
+  else
+    Result := IncludeTrailingPathDelimiter(HomeDir) + 'bin/yt-dlp';
+end;
+
+function TFormMain.FindYtDlpForPlayback: string;
+var
+  UserPath: string;
+begin
+  Result := '';
+
+  UserPath := UserYtDlpPath;
+  if (UserPath <> '') and FileExists(UserPath) and (fpAccess(UserPath, X_OK) = 0) then
+  begin
+    Result := UserPath;
+    Exit;
+  end;
+
+  { Let mpv's ytdl_hook resolve yt-dlp from PATH if there is no ~/bin copy. }
+  if IsExecutableInPath('yt-dlp') then
+    Result := 'yt-dlp';
+end;
+
 function TFormMain.CanWatchYouTubeLocally: Boolean;
 begin
-  Result := IsExecutableInPath('mpv') and IsExecutableInPath('yt-dlp');
+  Result := IsExecutableInPath('mpv') and (FindYtDlpForPlayback <> '');
 end;
 
 procedure TFormMain.SetWatchButtonURL(const AURL: string);
 begin
   FCurrentVideoURL := AURL;
+  FYoutubePlayerAvailable := CanWatchYouTubeLocally;
+
   if Assigned(FWatchPanel) then
     FWatchPanel.Visible := FYoutubePlayerAvailable and (FCurrentVideoURL <> '');
 
-  if Assigned(FWatchButton) then
-    FWatchButton.Enabled := not (Assigned(FMpvProcess) and FMpvProcess.Running);
+  SetWatchButtonsEnabled(not (Assigned(FMpvProcess) and FMpvProcess.Running));
 end;
 
 procedure TFormMain.ListViewMouseDown(Sender: TObject; Button: TMouseButton;

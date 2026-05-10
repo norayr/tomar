@@ -9,7 +9,7 @@
         <IsPartOfProject Value="True"/>
         <EditorIndex Value="4"/>
         <CursorPos X="3" Y="12"/>
-        <UsageCount Value="95"/>
+        <UsageCount Value="97"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -19,9 +19,9 @@
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
         <IsVisibleTab Value="True"/>
-        <TopLine Value="447"/>
-        <CursorPos X="55" Y="477"/>
-        <UsageCount Value="95"/>
+        <TopLine Value="706"/>
+        <CursorPos X="136" Y="732"/>
+        <UsageCount Value="97"/>
         <Loaded Value="True"/>
         <LoadedDesigner Value="True"/>
       </Unit>
@@ -82,21 +82,21 @@
         <Filename Value="/usr/lib/fpc/3.2.2/source/packages/fcl-db/src/dbase/dbf.pas"/>
         <EditorIndex Value="3"/>
         <CursorPos X="71" Y="28"/>
-        <UsageCount Value="14"/>
+        <UsageCount Value="16"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="HtmlProvider.pas"/>
         <EditorIndex Value="2"/>
-        <CursorPos X="140" Y="13"/>
-        <UsageCount Value="11"/>
+        <CursorPos X="5" Y="7"/>
+        <UsageCount Value="13"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="FeedFetchUtils.pas"/>
         <EditorIndex Value="1"/>
         <CursorPos X="68" Y="12"/>
-        <UsageCount Value="10"/>
+        <UsageCount Value="12"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -115,14 +115,6 @@
       </Unit>
     </Units>
     <JumpHistory HistoryIndex="29">
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="185" Column="48" TopLine="175"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="107" Column="24" TopLine="96"/>
-      </Position>
       <Position>
         <Filename Value="MainForm.pas"/>
         <Caret Line="113" Column="25" TopLine="96"/>
@@ -234,6 +226,14 @@
       <Position>
         <Filename Value="MainForm.pas"/>
         <Caret Line="245" Column="51" TopLine="28"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="459" Column="83" TopLine="447"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="807" Column="69" TopLine="775"/>
       </Position>
     </JumpHistory>
     <RunParams>
