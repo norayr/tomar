@@ -62,6 +62,7 @@ type
 
     procedure CreateControls;
     procedure UpdateLayout;
+    procedure UpdateTreeViewTouchMetrics(const AIsPortrait: Boolean);
     procedure InitializeDatabase;
     procedure DebugLog(const S: string);
     procedure TreeViewSelectionChanged(Sender: TObject);
@@ -77,6 +78,7 @@ type
       Shift: TShiftState; X, Y: Integer);
     procedure TreeViewMouseMove(Sender: TObject; Shift: TShiftState;
       X, Y: Integer);
+    procedure TreeViewDblClick(Sender: TObject);
     procedure LongPressTimerTick(Sender: TObject);
 
     procedure HtmlPanelHotURL(Sender: TObject; const URL: string);
@@ -348,6 +350,7 @@ begin
   FTreeView.OnMouseDown := @TreeViewMouseDown;
   FTreeView.OnMouseUp := @TreeViewMouseUp;
   FTreeView.OnMouseMove := @TreeViewMouseMove;
+  FTreeView.OnDblClick := @TreeViewDblClick;
 
   // Create popup menu
   FPopupMenu := FTreeView.PopupMenu;
@@ -555,6 +558,36 @@ begin
   UpdateLayout;
 end;
 
+
+procedure TFormMain.UpdateTreeViewTouchMetrics(const AIsPortrait: Boolean);
+var
+  ShortSide: Integer;
+begin
+  if not Assigned(FTreeView) then Exit;
+
+  ShortSide := ClientWidth;
+  if ClientHeight < ShortSide then
+    ShortSide := ClientHeight;
+
+  { Make folder/feed rows easier to hit on phone-sized screens.
+    We only change font and indent, so it stays portable across LCL versions. }
+  if AIsPortrait or (ShortSide <= 480) then
+  begin
+    FTreeView.Font.Size := 13;
+    FTreeView.Indent := 36;
+  end
+  else if ShortSide <= 720 then
+  begin
+    FTreeView.Font.Size := 12;
+    FTreeView.Indent := 32;
+  end
+  else
+  begin
+    FTreeView.Font.Size := 10;
+    FTreeView.Indent := 24;
+  end;
+end;
+
 procedure TFormMain.UpdateLayout;
 const
   ToolbarH = 42;
@@ -598,6 +631,7 @@ begin
   SplitSize := DesiredSplitterSize;
 
   IsPortrait := ClientHeight >= ClientWidth;
+  UpdateTreeViewTouchMetrics(IsPortrait);
 
   { Keep splitters visible/grabbable even on ordinary same-orientation resizes. }
   if FSplitter1.Align in [alLeft, alRight] then
@@ -739,6 +773,34 @@ begin
     if (Abs(X - FLongPressPoint.X) > 10) or
        (Abs(Y - FLongPressPoint.Y) > 10) then
       FLongPressTimer.Enabled := False;
+  end;
+end;
+
+
+procedure TFormMain.TreeViewDblClick(Sender: TObject);
+var
+  Node: TTreeNode;
+  NodeData: TFeedNodeData;
+begin
+  if not Assigned(FTreeView) then Exit;
+
+  Node := FTreeView.GetNodeAt(FLongPressPoint.X, FLongPressPoint.Y);
+  if Node = nil then Exit;
+
+  FTreeView.Selected := Node;
+
+  { On small touch screens the expander arrow is hard to hit.
+    Double-tapping anywhere on a folder row toggles it. }
+  NodeData := nil;
+  if Assigned(Node.Data) then
+    NodeData := TFeedNodeData(Node.Data);
+
+  if Assigned(NodeData) and NodeData.IsFolder and (Node.Count > 0) then
+  begin
+    if Node.Expanded then
+      Node.Collapse(False)
+    else
+      Node.Expand(False);
   end;
 end;
 
