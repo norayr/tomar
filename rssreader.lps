@@ -18,8 +18,9 @@
         <ComponentName Value="FormMain"/>
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
-        <TopLine Value="34"/>
-        <CursorPos X="24" Y="45"/>
+        <IsVisibleTab Value="True"/>
+        <TopLine Value="446"/>
+        <CursorPos X="66" Y="455"/>
         <UsageCount Value="93"/>
         <Loaded Value="True"/>
         <LoadedDesigner Value="True"/>
@@ -93,74 +94,27 @@
       </Unit>
       <Unit>
         <Filename Value="FeedFetchUtils.pas"/>
-        <IsVisibleTab Value="True"/>
         <EditorIndex Value="1"/>
-        <CursorPos X="17" Y="24"/>
+        <CursorPos X="68" Y="12"/>
         <UsageCount Value="10"/>
         <Loaded Value="True"/>
       </Unit>
+      <Unit>
+        <Filename Value="/usr/lib/fpc/3.2.2/source/rtl/unix/bunxovlh.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="11"/>
+        <CursorPos X="19" Y="43"/>
+        <UsageCount Value="10"/>
+      </Unit>
+      <Unit>
+        <Filename Value="/usr/lib/fpc/3.2.2/source/rtl/unix/bunxh.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="62"/>
+        <CursorPos X="23" Y="82"/>
+        <UsageCount Value="10"/>
+      </Unit>
     </Units>
     <JumpHistory HistoryIndex="29">
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="1840" Column="26" TopLine="1818"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="1841" Column="16" TopLine="1819"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="1842" Column="16" TopLine="1820"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="1865" Column="34" TopLine="1844"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="1882" Column="96" TopLine="1861"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="1902" Column="65" TopLine="1881"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="1919" Column="42" TopLine="1898"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="1952" Column="38" TopLine="1931"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="113" Column="25" TopLine="102"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="133" Column="16" TopLine="111"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="135" Column="22" TopLine="113"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="603" Column="66" TopLine="582"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="608" Column="53" TopLine="587"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="598" Column="29" TopLine="595"/>
-      </Position>
-      <Position>
-        <Filename Value="MainForm.pas"/>
-        <Caret Line="31" Column="25" TopLine="18"/>
-      </Position>
       <Position>
         <Filename Value="MainForm.pas"/>
         <Caret Line="185" Column="48" TopLine="175"/>
@@ -220,6 +174,66 @@
       <Position>
         <Filename Value="HtmlProvider.pas"/>
         <Caret Line="17" Column="59"/>
+      </Position>
+      <Position>
+        <Filename Value="FeedFetchUtils.pas"/>
+        <Caret Line="24" Column="17"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="519" Column="33" TopLine="499"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="532" Column="5" TopLine="499"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="101" Column="26" TopLine="83"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="536" Column="55" TopLine="516"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="104" Column="13" TopLine="82"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="485" Column="13" TopLine="453"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="493" Column="13" TopLine="461"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="502" TopLine="470"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="100" Column="66" TopLine="83"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="101" Column="32" TopLine="82"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="486" Column="44" TopLine="470"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="1262" Column="32" TopLine="1228"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="101" Column="32" TopLine="83"/>
+      </Position>
+      <Position>
+        <Filename Value="MainForm.pas"/>
+        <Caret Line="245" Column="51" TopLine="28"/>
       </Position>
     </JumpHistory>
     <RunParams>

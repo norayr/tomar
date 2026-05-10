@@ -9,7 +9,7 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
-  ExtCtrls, Menus, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
+  ExtCtrls, Menus, Process, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
   FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils, FeedListUtils;
 
 type
@@ -23,7 +23,13 @@ type
     FListView: TListView;
     FHtmlPanel: TIpHtmlPanel;
     FHtmlPopup: TPopupMenu;
+    FWatchPanel: TPanel;
+    FWatchButton: TButton;
+    FMpvProcess: TProcess;
+    FMpvTimer: TTimer;
     FCurrentURL: string; // to track the link under mouse
+    FCurrentVideoURL: string;
+    FYoutubePlayerAvailable: Boolean;
 
     FLongPressTimer: TTimer;
     FLongPressPoint: TPoint;
@@ -63,6 +69,8 @@ type
     procedure HtmlPanelContextPopup(Sender: TObject; MousePos: TPoint;
        var Handled: Boolean);
     procedure MenuCopyLinkClick(Sender: TObject);
+    procedure WatchButtonClick(Sender: TObject);
+    procedure MpvTimerTick(Sender: TObject);
 
     procedure MenuAddFolderClick(Sender: TObject);
     procedure MenuAddFeedClick(Sender: TObject);
@@ -93,6 +101,9 @@ type
     function GetUnreadCount(const AFeedURL: string): Integer;
 
     function ConvertYouTubeURLToFeed(const AUrl: string): string;
+    function IsExecutableInPath(const ProgName: string): Boolean;
+    function CanWatchYouTubeLocally: Boolean;
+    procedure SetWatchButtonURL(const AURL: string);
   public
 
   end;
@@ -105,7 +116,7 @@ implementation
 {$R *.lfm}
 
 uses
-  LCLType, LCLIntf, RssUtils, FeedDbUtils, FeedTreeUtils, FeedActionUtils;
+  LCLType, LCLIntf, BaseUnix, RssUtils, FeedDbUtils, FeedTreeUtils, FeedActionUtils;
   //FeedDBCleanup;
 
 
@@ -137,6 +148,8 @@ begin
 
   FDataProvider := TCustomHtmlDataProvider.Create(Self);
   FLoadingFeed := False;
+  FCurrentVideoURL := '';
+  FYoutubePlayerAvailable := CanWatchYouTubeLocally;
 
 {$IFDEF RSSREADER_DEBUG}
   FDebugLog := TStringList.Create;
@@ -196,6 +209,9 @@ begin
 {$IFDEF RSSREADER_DEBUG}
   FreeAndNil(FDebugLog);
 {$ENDIF}
+
+  FreeAndNil(FMpvTimer);
+  FreeAndNil(FMpvProcess);
 
   FHttpClient.Free;
 end;
@@ -358,6 +374,26 @@ begin
   BottomPanel.BevelOuter := bvNone;
   BottomPanel.Constraints.MinHeight := 120;
 
+  FWatchPanel := TPanel.Create(Self);
+  FWatchPanel.Parent := BottomPanel;
+  FWatchPanel.Align := alTop;
+  FWatchPanel.Height := 42;
+  FWatchPanel.Caption := '';
+  FWatchPanel.BevelOuter := bvNone;
+  FWatchPanel.Visible := False;
+
+  FWatchButton := TButton.Create(Self);
+  FWatchButton.Parent := FWatchPanel;
+  FWatchButton.Align := alLeft;
+  FWatchButton.Width := 110;
+  FWatchButton.Caption := 'Watch';
+  FWatchButton.OnClick := @WatchButtonClick;
+
+  FMpvTimer := TTimer.Create(Self);
+  FMpvTimer.Interval := 1000;
+  FMpvTimer.Enabled := False;
+  FMpvTimer.OnTimer := @MpvTimerTick;
+
   FHtmlPanel := TIpHtmlPanel.Create(Self);
   FHtmlPanel.Parent := BottomPanel;
   FHtmlPanel.Align := alClient;
@@ -448,7 +484,108 @@ begin
     Clipboard.AsText := FCurrentURL;
 end;
 
+procedure TFormMain.WatchButtonClick(Sender: TObject);
+begin
+  if FCurrentVideoURL = '' then
+    Exit;
+
+  if Assigned(FMpvProcess) and FMpvProcess.Running then
+    Exit;
+
+  FreeAndNil(FMpvProcess);
+
+  FMpvProcess := TProcess.Create(nil);
+  try
+    FMpvProcess.Executable := 'mpv';
+    FMpvProcess.Parameters.Add('--ytdl=yes');
+    FMpvProcess.Parameters.Add('--ytdl-format=18/best[height<=360]');
+    FMpvProcess.Parameters.Add('--ytdl-raw-options=cookies-from-browser=firefox:/home/inky/.librewolf/vifu5p28.default-release::youtube');
+    FMpvProcess.Parameters.Add('--cache=yes');
+    FMpvProcess.Parameters.Add('--cache-secs=60');
+    FMpvProcess.Parameters.Add(FCurrentVideoURL);
+    FMpvProcess.Options := [];
+
+    FWatchButton.Enabled := False;
+    FMpvProcess.Execute;
+    FMpvTimer.Enabled := True;
+  except
+    on E: Exception do
+    begin
+      FreeAndNil(FMpvProcess);
+      FWatchButton.Enabled := True;
+      ShowMessage('Could not start mpv: ' + E.Message);
+    end;
+  end;
+end;
+
+procedure TFormMain.MpvTimerTick(Sender: TObject);
+begin
+  if not Assigned(FMpvProcess) then
+  begin
+    FMpvTimer.Enabled := False;
+    if Assigned(FWatchButton) then
+      FWatchButton.Enabled := True;
+    Exit;
+  end;
+
+  if not FMpvProcess.Running then
+  begin
+    FMpvTimer.Enabled := False;
+    FreeAndNil(FMpvProcess);
+    if Assigned(FWatchButton) then
+      FWatchButton.Enabled := True;
+  end;
+end;
+
 // end of copy link
+
+
+function TFormMain.IsExecutableInPath(const ProgName: string): Boolean;
+var
+  PathEnv, Candidate: string;
+  Parts: TStringList;
+  I: Integer;
+  AccessOK: Boolean;
+begin
+  Result := False;
+
+  PathEnv := GetEnvironmentVariable('PATH');
+  Parts := TStringList.Create;
+  try
+    ExtractStrings([':'], [], PChar(PathEnv), Parts);
+
+    for I := 0 to Parts.Count - 1 do
+    begin
+      Candidate := IncludeTrailingPathDelimiter(Parts[I]) + ProgName;
+
+      AccessOK := fpAccess(Candidate, X_OK) = 0;
+
+      if FileExists(Candidate) and AccessOK then
+      begin
+        Result := True;
+        Exit;
+      end;
+    end;
+
+  finally
+    Parts.Free;
+  end;
+end;
+
+function TFormMain.CanWatchYouTubeLocally: Boolean;
+begin
+  Result := IsExecutableInPath('mpv') and IsExecutableInPath('yt-dlp');
+end;
+
+procedure TFormMain.SetWatchButtonURL(const AURL: string);
+begin
+  FCurrentVideoURL := AURL;
+  if Assigned(FWatchPanel) then
+    FWatchPanel.Visible := FYoutubePlayerAvailable and (FCurrentVideoURL <> '');
+
+  if Assigned(FWatchButton) then
+    FWatchButton.Enabled := not (Assigned(FMpvProcess) and FMpvProcess.Running);
+end;
 
 procedure TFormMain.ListViewMouseDown(Sender: TObject; Button: TMouseButton;
   Shift: TShiftState; X, Y: Integer);
@@ -568,6 +705,7 @@ begin
                        //'src="https://www.youtube.com/embed/' + VideoId + '" ' +
                        //'frameborder="0" allowfullscreen></iframe></p>' +
                        '</body></html>';
+        SetWatchButtonURL(Content);
         try
           FHtmlPanel.SetHTMLFromStr(HtmlContent);
         except
@@ -578,6 +716,7 @@ begin
       else
       begin
         // Regular RSS feed content
+        SetWatchButtonURL('');
         try
           FHtmlPanel.SetHTMLFromStr(Content);
         except
