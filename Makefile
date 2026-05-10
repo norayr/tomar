@@ -1,7 +1,3 @@
-# makefile for maemo-leste which is based on devuan chimaera
-# define the architecture
-ARCH = arm-linux
-
 # determine the architecture
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
@@ -35,7 +31,12 @@ export PATH = $(CUSTOM_PATH)
 
 # Define the project and output file
 PROJECT = rssreader.lpr
-OUTFILE = tomar 
+OUTFILE = tomar
+FPC ?= fpc
+PREFIX ?= /usr
+DESTDIR ?=
+
+UNITDIR := build/units
 
 # Define the FPC command
 FPC = fpc
@@ -51,14 +52,23 @@ PARAMS =  $(PROJECT) -FU/tmp -Xs -Xg -MObjFPC -Scgi -O1 -gl -vewnhi -l \
 
 # Default target to build the project
 all:
+	$(FPC) $(OUTFILE)
+$(OUTFILE): $(PROJECT) MainForm.pas
+	mkdir -p $(UNITDIR)
 	$(FPC) $(PARAMS)
+
+clean:
+	rm -rf build $(OUTFILE) *.o *.ppu lib/*.o lib/*.ppu
+
+install: install_hildon
+
 install_hildon:
-	mkdir -p $(CURDIR)/debian/comics-daily/usr/share/pixmaps/comics-daily
-	cp comics-daily.png $(CURDIR)/debian/comics-daily/usr/share/pixmaps/
-	cp comics-daily-insect.png $(CURDIR)/debian/comics-daily/usr/share/pixmaps/comics-daily/
-	cp comics-daily-insect-rf.png $(CURDIR)/debian/comics-daily/usr/share/pixmaps/comics-daily/
-	cp comics-daily-insect-lf.png $(CURDIR)/debian/comics-daily/usr/share/pixmaps/comics-daily/
-	mkdir -p $(CURDIR)/debian/comics-daily/usr/share/applications/hildon
-	cp comics-daily.desktop $(CURDIR)/debian/comics-daily/usr/share/applications/hildon/
-	mkdir -p $(CURDIR)/debian/comics-daily/usr/bin
-	cp comics-daily $(CURDIR)/debian/comics-daily/usr/bin/
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 0755 $(OUTFILE) $(DESTDIR)$(PREFIX)/bin/tomar
+
+	install -d $(DESTDIR)$(PREFIX)/share/applications/hildon
+	install -m 0644 tomar.desktop $(DESTDIR)$(PREFIX)/share/applications/hildon/tomar.desktop
+
+	install -d $(DESTDIR)$(PREFIX)/share/pixmaps
+	install -m 0644 icon/receiver_48x48.png $(DESTDIR)$(PREFIX)/share/pixmaps/tomar.png
+

@@ -1,0 +1,70 @@
+Source: tomar
+Section: user/network
+Priority: optional
+Maintainer: norayr chilingarian <norayr@arnet.am>
+Build-Depends:
+ debhelper-compat (= 13),
+ fpc,
+ fp-utils,
+ fp-units-base,
+ fp-units-db,
+ fp-units-fcl,
+ fp-units-fv,
+ fp-units-gfx,
+ fp-units-gtk2,
+ fp-units-math,
+ fp-units-misc,
+ fp-units-multimedia,
+ fp-units-net,
+ fp-units-rtl,
+ fp-compiler,
+ fpc-source,
+ lazarus,
+ lcl,
+ lcl-gtk2
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: tomar
+Section: user/network
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends}
+Description: Simple, hopefully mobile friendly RSS/Atom reader.
+ You can also subscribe to youtube feeds with it. Just paste a
+ Youtube user profile URL and tomar will automatically find the
+ feed and subscribe to it.
+ It has buttons to watch with lower/higher resolution, as well
+ as a button to install a latest yt-dlp to ~/bin directory.
+XSBC-Bugtracker: mailto:norayr@arnet.am
+XB-Maemo-Icon-26:
+ iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAEj0lEQVRo3u2Z
+ a4hVVRTHf/vOYDlG5JBOxdBbxDR8pBClIfkoCQskexCGGGhS0QfNAs3CSCx6
+ YRAWvbSaXghSpH6SJMiyJFArIqMotSwzw8mcnHt+fXBPnM6cO/fO6Mi9MAsu
+ nL322vv89zprr9eFPuqjTqSepQ6pVfDD1L/URL29nHyhysAPBJYCDUAAxtaK
+ 1gepj6mH1L3q++qmqjejaOtPReCH1IfVAbWg8Wb12WjrRfVF9exaAH6+uko9
+ Ei/pB+qIWgB+ofqSetRjtE2dVAvAL1ZfUdsj8B/U2bUAfKi6Otq36kF1kdq/
+ 2oEPV9dE+1b9R12pDqp24Jeqb6eAq76rDq124KMi0DTwLer4agc+Rl2XAf6t
+ enO1Ax+nvuf/6YB6r3pKVYJOkqRfktigvpnReJv6hNpYzRqfrf6t7lfnptzi
+ G+pF1YAxZADPBCal+DOAM+PzV8Bg4EfgsxJ7eRIw7wReDiEczmr7UWuHPuz0
+ BdRDwGk1VLyNCyF8Xh8vaqEb4M0zvxK0u0K5Skz9nAyvMe1p6sp8sm/Uheqo
+ JEkakiQ5Q71MfUD9rsSa+d1wFo0VyCzK7D85XRPbhbaXAlfGL9QSQmgNIfwB
+ vBW1MAFYAiSZddujctJmelumGrshDleoo6J8f3V6Su6OlBPp5IAKZcxhLrAJ
+ 2AE8BAxLyV4M3Bc33gncmjGvABBCWB6BLAFGFovFoD4JDASao3w/oE5dDpwK
+ DFGnxJRkRFmTLWFCr6oj1dYKvEK7eq26LMUrxsCXZJ7zfpaZTzJBVHVK+gCF
+ zGSb2qR+0Q3Xti92F36N4wkVRvr6KP98mTswvas7kKX1wFBgZDc8xWDgRmBN
+ HDdUsqhQKLQDLcCGMqK5uVZ9CeEtwFU9cIGTgdXAAuAR9YIKo/NHQJM6LxPV
+ Q6oBN687BzgIjO6Bv24G9nYEmvjr1TSovguBoz3YtO0425WHgVXR8yUxL5vf
+ lTmWetklwNYeAPikxJcT2Ai8AHxcYu2fwESgFXgaeCYqZCJwoJwnyHqhXWpj
+ hS40TWPUDRneYXWiOisW+DPjc9Ytzo/duiy9ps5JjZNK3KjqDHVxN8CvUcfm
+ AFuhLs3w7o7yaTo3djGylMTGWHuGP7XcAX6K4f71CsBvjjFgZ87c1er2DO/T
+ WCylQTZ3sX9eQJ1a7v+B5hgP7gcWlrDDVmAZcAuwFhieI9ME/Jzh7QNOz3iU
+ JuDrnPV74uUeULIYK/EFOug39U51oDpNvUu9R70+an2Ourur4iPejV/ieE9s
+ DuzIyK2L/L2Zd49XW3L2vea/UyRJUgghFLvISEPUwhbg+8g7D7iiwjriHWBx
+ 1LrA4zHoZaklZr/DgLqYRD4I5PVTp4UQNh47QLFYCIVCsbd7BDkRNo+KMbsN
+ 0STrSshdF0JYXw9QqKtL1NZeLilDmbS442B1OTlY3qF/z17ilSeoq+BxHrCS
+ uc3o1ry2yqxo1yFq4fLU9Fpg/wkAZoVtmLkpuf3x/QC7gOc6tVVy8u8FmVs/
+ mpNImXdvKyVXX8ZztMXnIx017kmkm2JsAPiSPuqj3qF/AahjRhB3lvx8AAAA
+ AElFTkSuQmCC
+XSBC-Maemo-Display-Name: chromatika
