@@ -569,22 +569,20 @@ begin
   if ClientHeight < ShortSide then
     ShortSide := ClientHeight;
 
-  { Make folder/feed rows easier to hit on phone-sized screens.
-    We only change font and indent, so it stays portable across LCL versions. }
-  if AIsPortrait or (ShortSide <= 480) then
+  if AIsPortrait or (ShortSide <= 600) then
   begin
-    FTreeView.Font.Size := 13;
-    FTreeView.Indent := 36;
+    FTreeView.Font.Size := 22;
+    FTreeView.Indent := 48;
   end
-  else if ShortSide <= 720 then
+  else if ShortSide <= 900 then
   begin
-    FTreeView.Font.Size := 12;
-    FTreeView.Indent := 32;
+    FTreeView.Font.Size := 20;
+    FTreeView.Indent := 42;
   end
   else
   begin
-    FTreeView.Font.Size := 10;
-    FTreeView.Indent := 24;
+    FTreeView.Font.Size := 18;
+    FTreeView.Indent := 34;
   end;
 end;
 
