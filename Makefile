@@ -42,7 +42,7 @@ UNITDIR := build/units
 FPC = fpc
 
 # Define the compilation parameters
-PARAMS =  $(PROJECT) -FU/tmp -Xs -Xg -MObjFPC -Scgi -O1 -gl -vewnhi -l \
+PARAMS =  $(PROJECT) -FU$(UNITDIR) -Xs -Xg -MObjFPC -Scgi -O1 -gl -vewnhi -l \
 	-Fu$(LAZARUS)/components/lazutils \
 	-Fu$(LAZARUS)/lcl/units/$(ARCH)/ \
 	-Fu$(LAZARUS)/lcl/units/$(ARCH)/gtk2/ \
@@ -51,8 +51,7 @@ PARAMS =  $(PROJECT) -FU/tmp -Xs -Xg -MObjFPC -Scgi -O1 -gl -vewnhi -l \
 	-Fu. -o$(OUTFILE) -dLCL -dLCLgtk2
 
 # Default target to build the project
-all:
-	$(FPC) $(OUTFILE)
+all: $(OUTFILE)
 $(OUTFILE): $(PROJECT) MainForm.pas
 	mkdir -p $(UNITDIR)
 	$(FPC) $(PARAMS)
