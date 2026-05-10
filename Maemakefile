@@ -1,0 +1,64 @@
+# makefile for maemo-leste which is based on devuan chimaera
+# define the architecture
+ARCH = arm-linux
+
+# determine the architecture
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+
+# set the ARCH variable based on the detected architecture
+ifeq ($(UNAME_S),Linux)
+	ifeq ($(UNAME_M),x86_64)
+		ARCH := x86_64-linux
+	else ifeq ($(UNAME_M),aarch64)
+		ARCH := aarch64-linux
+	else ifeq ($(UNAME_M),armv7l)
+		ARCH := arm-linux
+	else
+		ARCH := unknown
+	endif
+else
+	ARCH := unknown
+endif
+
+# print the detected architecture
+$(info ARCH is set to $(ARCH))
+
+# define the path to lazarus, this is where is it in case of chimaera
+#LAZARUS = "/usr/lib/lazarus/2.0.10"
+#LAZARUS = "/usr/lib/lazarus/2.2.6"
+LAZARUS = "/usr/lib/lazarus/4.0"
+
+# Define the PATH to include the necessary directories for fpc and fpcres
+CUSTOM_PATH = "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH = $(CUSTOM_PATH)
+
+# Define the project and output file
+PROJECT = rssreader.lpr
+OUTFILE = tomar 
+
+# Define the FPC command
+FPC = fpc
+
+# Define the compilation parameters
+PARAMS =  $(PROJECT) -FU/tmp -Xs -Xg -MObjFPC -Scgi -O1 -gl -vewnhi -l \
+	-Fu$(LAZARUS)/components/lazutils \
+	-Fu$(LAZARUS)/lcl/units/$(ARCH)/ \
+	-Fu$(LAZARUS)/lcl/units/$(ARCH)/gtk2/ \
+	-Fu$(LAZARUS)/packager/units/$(ARCH)/ \
+	-Fu$(LAZARUS)/components/turbopower_ipro/ \
+	-Fu. -o$(OUTFILE) -dLCL -dLCLgtk2
+
+# Default target to build the project
+all:
+	$(FPC) $(PARAMS)
+install_hildon:
+	mkdir -p $(CURDIR)/debian/comics-daily/usr/share/pixmaps/comics-daily
+	cp comics-daily.png $(CURDIR)/debian/comics-daily/usr/share/pixmaps/
+	cp comics-daily-insect.png $(CURDIR)/debian/comics-daily/usr/share/pixmaps/comics-daily/
+	cp comics-daily-insect-rf.png $(CURDIR)/debian/comics-daily/usr/share/pixmaps/comics-daily/
+	cp comics-daily-insect-lf.png $(CURDIR)/debian/comics-daily/usr/share/pixmaps/comics-daily/
+	mkdir -p $(CURDIR)/debian/comics-daily/usr/share/applications/hildon
+	cp comics-daily.desktop $(CURDIR)/debian/comics-daily/usr/share/applications/hildon/
+	mkdir -p $(CURDIR)/debian/comics-daily/usr/bin
+	cp comics-daily $(CURDIR)/debian/comics-daily/usr/bin/
