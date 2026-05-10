@@ -1,0 +1,12 @@
+on:
+  workflow_call:
+  push:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+enable-email-notifications: true
+
+jobs:
+  Build Maemo Packages:
+    uses: leste-cicd/forgejo-workflows/.forgejo/workflows/maemo-entry.yml@master
+    secrets: inherit
