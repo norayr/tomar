@@ -408,7 +408,7 @@ begin
   FSplitter1 := TSplitter.Create(Self);
   FSplitter1.Parent := Self;
   FSplitter1.Align := alLeft;
-  FSplitter1.Width := 12;
+  FSplitter1.Width := 18;
   // Force the left/right splitter to sit after the tree pane, not before it.
   // With Align=alLeft, LCL uses Left to decide the order among left-aligned controls.
   FSplitter1.Left := FLeftPanel.Left + FLeftPanel.Width;
@@ -417,7 +417,7 @@ begin
   FSplitter1.MinSize := 120;
   FSplitter1.Beveled := True;
   FSplitter1.Cursor := crHSplit;
-  FSplitter1.Color := clMedGray;
+  FSplitter1.Color := clGray;
 
   // Right Panel
   FRightPanel := TPanel.Create(Self);
@@ -469,7 +469,7 @@ begin
   FSplitter2 := TSplitter.Create(Self);
   FSplitter2.Parent := FRightPanel;
   FSplitter2.Align := alTop;
-  FSplitter2.Height := 12;
+  FSplitter2.Height := 18;
   // Force the vertical splitter to sit below the post list / above the post view.
   // With Align=alTop, LCL uses Top to decide the order among top-aligned controls.
   FSplitter2.Top := FTopPanel.Top + FTopPanel.Height;
@@ -478,7 +478,7 @@ begin
   FSplitter2.MinSize := 120;
   FSplitter2.Beveled := True;
   FSplitter2.Cursor := crVSplit;
-  FSplitter2.Color := clMedGray;
+  FSplitter2.Color := clGray;
 
   // Bottom panel with HTML viewer
   FBottomPanel := TPanel.Create(Self);
@@ -557,17 +557,35 @@ end;
 
 procedure TFormMain.UpdateLayout;
 const
-  SplitSize = 12;
   ToolbarH = 42;
 var
   IsPortrait: Boolean;
   TreeSize, ListSize, ContentSize: Integer;
+  SplitSize: Integer;
 
   function ClampInt(AValue, AMin, AMax: Integer): Integer;
   begin
     Result := AValue;
     if Result < AMin then Result := AMin;
     if Result > AMax then Result := AMax;
+  end;
+
+  function DesiredSplitterSize: Integer;
+  var
+    ShortSide: Integer;
+  begin
+    ShortSide := ClientWidth;
+    if ClientHeight < ShortSide then
+      ShortSide := ClientHeight;
+
+    { On Maemo / small touch screens the default 8-12 px splitter is
+      difficult to see and grab.  Make it thicker only on small windows. }
+    if ShortSide <= 480 then
+      Result := 24
+    else if ShortSide <= 720 then
+      Result := 18
+    else
+      Result := 12;
   end;
 
 begin
@@ -577,7 +595,25 @@ begin
 
   if (ClientWidth < 20) or (ClientHeight < 20) then Exit;
 
+  SplitSize := DesiredSplitterSize;
+
   IsPortrait := ClientHeight >= ClientWidth;
+
+  { Keep splitters visible/grabbable even on ordinary same-orientation resizes. }
+  if FSplitter1.Align in [alLeft, alRight] then
+    FSplitter1.Width := SplitSize
+  else
+    FSplitter1.Height := SplitSize;
+
+  if FSplitter2.Align in [alLeft, alRight] then
+    FSplitter2.Width := SplitSize
+  else
+    FSplitter2.Height := SplitSize;
+
+  FSplitter1.Color := clGray;
+  FSplitter2.Color := clGray;
+  FSplitter1.Beveled := True;
+  FSplitter2.Beveled := True;
 
   { Do not undo a user's splitter drag on ordinary resizes.
     Reflow only at startup and when the window changes orientation. }
