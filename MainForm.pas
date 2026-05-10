@@ -10,14 +10,19 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
   ExtCtrls, Menus, Process, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
-  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils, FeedListUtils;
+  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils, FeedListUtils
+  {$IFDEF LCLGTK2}
+  , x, Gtk2, Gdk2, Gdk2x, xatom
+  {$ENDIF};
 
 type
   { TFormMain }
 
   TFormMain = class(TForm)
+    procedure FormActivate(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
+    procedure FormResize(Sender: TObject);
   private
     FTreeView: TTreeView;
     FListView: TListView;
@@ -30,6 +35,12 @@ type
     FCurrentURL: string; // to track the link under mouse
     FCurrentVideoURL: string;
     FYoutubePlayerAvailable: Boolean;
+
+    FLeftPanel, FRightPanel, FTopPanel, FBottomPanel: TPanel;
+    FWinPropertySet: Boolean;
+    FInResize: Boolean;
+    FLastPortraitLayout: Boolean;
+    FLayoutInitialized: Boolean;
 
     FLongPressTimer: TTimer;
     FLongPressPoint: TPoint;
@@ -48,6 +59,7 @@ type
 {$ENDIF}
 
     procedure CreateControls;
+    procedure UpdateLayout;
     procedure InitializeDatabase;
     procedure DebugLog(const S: string);
     procedure TreeViewSelectionChanged(Sender: TObject);
@@ -134,6 +146,47 @@ end;
 
 { TFormMain }
 
+procedure TFormMain.FormActivate(Sender: TObject);
+{$IFDEF LCLGTK2}
+var
+  Widget: PGtkWidget;
+  Atom: TGdkAtom;
+  Value: Cardinal;
+{$ENDIF}
+begin
+  {$IFDEF LCLGTK2}
+  if FWinPropertySet then Exit;
+
+  Widget := PGtkWidget(Handle);
+  if (Widget <> nil) and (Widget^.window <> nil) then
+  begin
+    { Tell Hildon / Maemo Leste that this window supports portrait mode. }
+    Atom := gdk_atom_intern('_HILDON_PORTRAIT_MODE_SUPPORT', False);
+    Value := 1;
+
+    if Atom <> 0 then
+    begin
+      gdk_property_change(Widget^.window, Atom,
+        gdk_x11_xatom_to_atom(XA_CARDINAL), 32,
+        GDK_PROP_MODE_REPLACE, @Value, 1);
+      FWinPropertySet := True;
+    end;
+  end;
+  {$ENDIF}
+end;
+
+procedure TFormMain.FormResize(Sender: TObject);
+begin
+  if FInResize then Exit;
+
+  FInResize := True;
+  try
+    UpdateLayout;
+  finally
+    FInResize := False;
+  end;
+end;
+
 procedure TFormMain.FormCreate(Sender: TObject);
 var
   Duplicates: TStringList;
@@ -142,6 +195,15 @@ begin
   Width := 1000;
   Height := 700;
   Position := poScreenCenter;
+  Constraints.MinWidth := 240;
+  Constraints.MinHeight := 240;
+
+  FWinPropertySet := False;
+  FInResize := False;
+  FLastPortraitLayout := False;
+  FLayoutInitialized := False;
+  OnActivate := @FormActivate;
+  OnResize := @FormResize;
 
   FHttpClient := TFPHTTPClient.Create(nil);
   FHttpClient.AllowRedirect := True;
@@ -218,23 +280,23 @@ end;
 
 procedure TFormMain.CreateControls;
 var
-  LeftPanel, RightPanel, TopPanel, BottomPanel: TPanel;
   LeftToolbar: TPanel;
   BtnAddFeed, BtnAddFolder, BtnRefreshAll: TButton;
   MenuItem: TMenuItem;
 begin
   // Left Panel with TreeView
-  LeftPanel := TPanel.Create(Self);
-  LeftPanel.Parent := Self;
-  LeftPanel.Align := alLeft;
-  LeftPanel.Width := 300;
-  LeftPanel.Caption := '';
-  LeftPanel.BevelOuter := bvNone;
-  LeftPanel.Constraints.MinWidth := 120;
+  FLeftPanel := TPanel.Create(Self);
+  FLeftPanel.Parent := Self;
+  FLeftPanel.Align := alLeft;
+  { Initial size is calculated by UpdateLayout from the current window size. }
+  FLeftPanel.Width := 1;
+  FLeftPanel.Caption := '';
+  FLeftPanel.BevelOuter := bvNone;
+  FLeftPanel.Constraints.MinWidth := 120;
 
   // Touch-friendly toolbar for empty/narrow tree pane.
   LeftToolbar := TPanel.Create(Self);
-  LeftToolbar.Parent := LeftPanel;
+  LeftToolbar.Parent := FLeftPanel;
   LeftToolbar.Align := alTop;
   LeftToolbar.Height := 42;
   LeftToolbar.Caption := '';
@@ -268,7 +330,7 @@ begin
   BtnRefreshAll.OnClick := @MenuRefreshAllClick;
 
   FTreeView := TTreeView.Create(Self);
-  FTreeView.Parent := LeftPanel;
+  FTreeView.Parent := FLeftPanel;
   FTreeView.Align := alClient;
   FTreeView.ReadOnly := True;
   FTreeView.OnSelectionChanged := @TreeViewSelectionChanged;
@@ -341,7 +403,7 @@ begin
   FSplitter1.Width := 12;
   // Force the left/right splitter to sit after the tree pane, not before it.
   // With Align=alLeft, LCL uses Left to decide the order among left-aligned controls.
-  FSplitter1.Left := LeftPanel.Left + LeftPanel.Width;
+  FSplitter1.Left := FLeftPanel.Left + FLeftPanel.Width;
   FSplitter1.ResizeStyle := rsUpdate;
   FSplitter1.AutoSnap := False;
   FSplitter1.MinSize := 120;
@@ -350,23 +412,24 @@ begin
   FSplitter1.Color := clMedGray;
 
   // Right Panel
-  RightPanel := TPanel.Create(Self);
-  RightPanel.Parent := Self;
-  RightPanel.Align := alClient;
-  RightPanel.Caption := '';
-  RightPanel.BevelOuter := bvNone;
+  FRightPanel := TPanel.Create(Self);
+  FRightPanel.Parent := Self;
+  FRightPanel.Align := alClient;
+  FRightPanel.Caption := '';
+  FRightPanel.BevelOuter := bvNone;
 
   // Top panel with ListView
-  TopPanel := TPanel.Create(Self);
-  TopPanel.Parent := RightPanel;
-  TopPanel.Align := alTop;
-  TopPanel.Height := 250;
-  TopPanel.Caption := '';
-  TopPanel.BevelOuter := bvNone;
-  TopPanel.Constraints.MinHeight := 90;
+  FTopPanel := TPanel.Create(Self);
+  FTopPanel.Parent := FRightPanel;
+  FTopPanel.Align := alTop;
+  { Initial size is calculated by UpdateLayout from the current window size. }
+  FTopPanel.Height := 1;
+  FTopPanel.Caption := '';
+  FTopPanel.BevelOuter := bvNone;
+  FTopPanel.Constraints.MinHeight := 90;
 
   FListView := TListView.Create(Self);
-  FListView.Parent := TopPanel;
+  FListView.Parent := FTopPanel;
   FListView.Align := alClient;
   //FListView.ViewStyle := vsReport;
   FListView.ViewStyle := vsList;
@@ -396,12 +459,12 @@ begin
 
   // Splitter 2
   FSplitter2 := TSplitter.Create(Self);
-  FSplitter2.Parent := RightPanel;
+  FSplitter2.Parent := FRightPanel;
   FSplitter2.Align := alTop;
   FSplitter2.Height := 12;
   // Force the vertical splitter to sit below the post list / above the post view.
   // With Align=alTop, LCL uses Top to decide the order among top-aligned controls.
-  FSplitter2.Top := TopPanel.Top + TopPanel.Height;
+  FSplitter2.Top := FTopPanel.Top + FTopPanel.Height;
   FSplitter2.ResizeStyle := rsUpdate;
   FSplitter2.AutoSnap := False;
   FSplitter2.MinSize := 120;
@@ -410,15 +473,15 @@ begin
   FSplitter2.Color := clMedGray;
 
   // Bottom panel with HTML viewer
-  BottomPanel := TPanel.Create(Self);
-  BottomPanel.Parent := RightPanel;
-  BottomPanel.Align := alClient;
-  BottomPanel.Caption := '';
-  BottomPanel.BevelOuter := bvNone;
-  BottomPanel.Constraints.MinHeight := 90;
+  FBottomPanel := TPanel.Create(Self);
+  FBottomPanel.Parent := FRightPanel;
+  FBottomPanel.Align := alClient;
+  FBottomPanel.Caption := '';
+  FBottomPanel.BevelOuter := bvNone;
+  FBottomPanel.Constraints.MinHeight := 90;
 
   FWatchPanel := TPanel.Create(Self);
-  FWatchPanel.Parent := BottomPanel;
+  FWatchPanel.Parent := FBottomPanel;
   FWatchPanel.Align := alTop;
   FWatchPanel.Height := 42;
   FWatchPanel.Caption := '';
@@ -438,7 +501,7 @@ begin
   FMpvTimer.OnTimer := @MpvTimerTick;
 
   FHtmlPanel := TIpHtmlPanel.Create(Self);
-  FHtmlPanel.Parent := BottomPanel;
+  FHtmlPanel.Parent := FBottomPanel;
   FHtmlPanel.Align := alClient;
   FHtmlPanel.AllowTextSelect := True;
   FHtmlPanel.DataProvider := FDataProvider;
@@ -458,6 +521,130 @@ begin
   MenuItem.OnClick := @MenuCopyLinkClick;
   FHtmlPopup.Items.Add(MenuItem);
   FHtmlPanel.PopupMenu := FHtmlPopup;
+
+  UpdateLayout;
+end;
+
+procedure TFormMain.UpdateLayout;
+const
+  SplitSize = 12;
+  ToolbarH = 42;
+var
+  IsPortrait: Boolean;
+  TreeSize, ListSize, ContentSize: Integer;
+
+  function ClampInt(AValue, AMin, AMax: Integer): Integer;
+  begin
+    Result := AValue;
+    if Result < AMin then Result := AMin;
+    if Result > AMax then Result := AMax;
+  end;
+
+begin
+  if (FLeftPanel = nil) or (FRightPanel = nil) or
+     (FTopPanel = nil) or (FBottomPanel = nil) or
+     (FSplitter1 = nil) or (FSplitter2 = nil) then Exit;
+
+  if (ClientWidth < 20) or (ClientHeight < 20) then Exit;
+
+  IsPortrait := ClientHeight >= ClientWidth;
+
+  { Do not undo a user's splitter drag on ordinary resizes.
+    Reflow only at startup and when the window changes orientation. }
+  if FLayoutInitialized and (FLastPortraitLayout = IsPortrait) then Exit;
+
+  { Avoid autosnapping panes away on small phone screens. }
+  FSplitter1.AutoSnap := False;
+  FSplitter2.AutoSnap := False;
+
+  if IsPortrait then
+  begin
+    { Phone / portrait: tree, post list, and post view are stacked vertically.
+      Defaults are proportional to the current form size, not fixed pixels. }
+    TreeSize := ClampInt((ClientHeight * 28) div 100,
+      ToolbarH + 70, (ClientHeight * 45) div 100);
+
+    FLeftPanel.Align := alTop;
+    FLeftPanel.Height := TreeSize;
+    FLeftPanel.Constraints.MinWidth := 0;
+    FLeftPanel.Constraints.MinHeight := ToolbarH + 70;
+
+    FSplitter1.Align := alTop;
+    FSplitter1.Height := SplitSize;
+    FSplitter1.Cursor := crVSplit;
+    FSplitter1.MinSize := ToolbarH + 70;
+
+    FRightPanel.Align := alClient;
+
+    ContentSize := ClientHeight - TreeSize - SplitSize;
+    if ContentSize < 1 then ContentSize := 1;
+    { Post list and post view start near 50/50 in the remaining space. }
+    ListSize := ClampInt((ContentSize - SplitSize) div 2,
+      70, (ContentSize * 70) div 100);
+
+    FTopPanel.Align := alTop;
+    FTopPanel.Height := ListSize;
+    FTopPanel.Constraints.MinHeight := 70;
+
+    FSplitter2.Align := alTop;
+    FSplitter2.Height := SplitSize;
+    FSplitter2.Cursor := crVSplit;
+    FSplitter2.MinSize := 70;
+
+    FBottomPanel.Align := alClient;
+  end
+  else
+  begin
+    { Desktop / landscape: tree on the left, post list above post view.
+      Tree starts at about 28% of the form width. }
+    TreeSize := ClampInt((ClientWidth * 28) div 100,
+      120, (ClientWidth * 45) div 100);
+
+    FLeftPanel.Align := alLeft;
+    FLeftPanel.Width := TreeSize;
+    FLeftPanel.Constraints.MinWidth := 120;
+    FLeftPanel.Constraints.MinHeight := 0;
+
+    FSplitter1.Align := alLeft;
+    FSplitter1.Width := SplitSize;
+    FSplitter1.Cursor := crHSplit;
+    FSplitter1.MinSize := 120;
+
+    FRightPanel.Align := alClient;
+
+    { Post list and post view start near 50/50 of the window height. }
+    ListSize := ClampInt((ClientHeight - SplitSize) div 2,
+      90, (ClientHeight * 70) div 100);
+
+    FTopPanel.Align := alTop;
+    FTopPanel.Height := ListSize;
+    FTopPanel.Constraints.MinHeight := 90;
+
+    FSplitter2.Align := alTop;
+    FSplitter2.Height := SplitSize;
+    FSplitter2.Cursor := crVSplit;
+    FSplitter2.MinSize := 90;
+
+    FBottomPanel.Align := alClient;
+  end;
+
+  { Keep splitter controls immediately after the pane they resize. }
+  if IsPortrait then
+  begin
+    FLeftPanel.Top := 0;
+    FSplitter1.Top := FLeftPanel.Top + FLeftPanel.Height;
+  end
+  else
+  begin
+    FLeftPanel.Left := 0;
+    FSplitter1.Left := FLeftPanel.Left + FLeftPanel.Width;
+  end;
+
+  FTopPanel.Top := 0;
+  FSplitter2.Top := FTopPanel.Top + FTopPanel.Height;
+
+  FLastPortraitLayout := IsPortrait;
+  FLayoutInitialized := True;
 end;
 
 // TreeView long-press handlers
