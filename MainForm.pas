@@ -227,7 +227,7 @@ begin
   LeftPanel := TPanel.Create(Self);
   LeftPanel.Parent := Self;
   LeftPanel.Align := alLeft;
-  LeftPanel.Width := 250;
+  LeftPanel.Width := 300;
   LeftPanel.Caption := '';
   LeftPanel.BevelOuter := bvNone;
   LeftPanel.Constraints.MinWidth := 120;
@@ -338,7 +338,10 @@ begin
   FSplitter1 := TSplitter.Create(Self);
   FSplitter1.Parent := Self;
   FSplitter1.Align := alLeft;
-  FSplitter1.Width := 8;
+  FSplitter1.Width := 12;
+  // Force the left/right splitter to sit after the tree pane, not before it.
+  // With Align=alLeft, LCL uses Left to decide the order among left-aligned controls.
+  FSplitter1.Left := LeftPanel.Left + LeftPanel.Width;
   FSplitter1.ResizeStyle := rsUpdate;
   FSplitter1.AutoSnap := False;
   FSplitter1.MinSize := 120;
@@ -360,7 +363,7 @@ begin
   TopPanel.Height := 250;
   TopPanel.Caption := '';
   TopPanel.BevelOuter := bvNone;
-  TopPanel.Constraints.MinHeight := 120;
+  TopPanel.Constraints.MinHeight := 90;
 
   FListView := TListView.Create(Self);
   FListView.Parent := TopPanel;
@@ -395,7 +398,10 @@ begin
   FSplitter2 := TSplitter.Create(Self);
   FSplitter2.Parent := RightPanel;
   FSplitter2.Align := alTop;
-  FSplitter2.Height := 8;
+  FSplitter2.Height := 12;
+  // Force the vertical splitter to sit below the post list / above the post view.
+  // With Align=alTop, LCL uses Top to decide the order among top-aligned controls.
+  FSplitter2.Top := TopPanel.Top + TopPanel.Height;
   FSplitter2.ResizeStyle := rsUpdate;
   FSplitter2.AutoSnap := False;
   FSplitter2.MinSize := 120;
@@ -409,7 +415,7 @@ begin
   BottomPanel.Align := alClient;
   BottomPanel.Caption := '';
   BottomPanel.BevelOuter := bvNone;
-  BottomPanel.Constraints.MinHeight := 120;
+  BottomPanel.Constraints.MinHeight := 90;
 
   FWatchPanel := TPanel.Create(Self);
   FWatchPanel.Parent := BottomPanel;
