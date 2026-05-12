@@ -1,3 +1,9 @@
+tomar (0.9.1+leste1)  unstable; urgency=low
+
+  * this update shoudl increase refresh speed and decrease cpu load during it.
+
+ -- norayr chilingarian <norayr@arnet.am>  Tue, 12 May 2026 16:59:00 +0400
+
 tomar (0.9.0+leste1)  unstable; urgency=low
 
   * maemo modile friendly version.
