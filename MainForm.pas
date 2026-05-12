@@ -107,6 +107,8 @@ type
     procedure LoadFeedList;
     procedure SaveFeedList;
     procedure LoadRSSFeed(const AURL: string);
+    procedure LoadRSSFeedDataOnly(const AURL: string);
+    procedure ReloadSelectedFeedItemsAfterBatchRefresh;
     procedure LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean);
     procedure MarkFeedItemsAsNotSeen(const AURL: string);
     procedure SaveOrUpdateFeedItem(const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string);
@@ -1550,7 +1552,7 @@ end;
 
 procedure TFormMain.RefreshFeedAction(const AFeedURL: string);
 begin
-  LoadRSSFeed(AFeedURL);
+  LoadRSSFeedDataOnly(AFeedURL);
 end;
 
 procedure TFormMain.MarkFeedReadAction(const AFeedURL: string);
@@ -1580,7 +1582,11 @@ begin
   RefreshCount := FeedActionUtils.RefreshFeedsInSubtree(FTreeView.Selected, @RefreshFeedAction);
 
   if RefreshCount > 0 then
-    ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds in folder.')
+  begin
+    FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
+    ReloadSelectedFeedItemsAfterBatchRefresh;
+    ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds in folder.');
+  end
   else
     ShowMessage('No feeds found in folder.');
 end;
@@ -1598,7 +1604,11 @@ begin
   RefreshCount := FeedActionUtils.RefreshAllFeeds(FTreeView, @RefreshFeedAction);
 
   if RefreshCount > 0 then
-    ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds.')
+  begin
+    FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
+    ReloadSelectedFeedItemsAfterBatchRefresh;
+    ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds.');
+  end
   else
     ShowMessage('No feeds to refresh.');
 end;
@@ -1680,6 +1690,48 @@ begin
     end;
   finally
   end;
+end;
+
+procedure TFormMain.LoadRSSFeedDataOnly(const AURL: string);
+var
+  Response: string;
+  IsYouTubeFeed: Boolean;
+begin
+{$IFDEF RSSREADER_DEBUG}
+  FDebugLog.Clear;
+{$ENDIF}
+  DebugLog('=== Refreshing Feed Data Only ===');
+  DebugLog(Format('AURL parameter: "%s"', [AURL]));
+  DebugLog('');
+
+  try
+    Response := FHttpClient.Get(AURL);
+    ParseFeedResponse(AURL, Response, @MarkFeedItemsAsNotSeen, @SaveOrUpdateFeedItem, IsYouTubeFeed);
+
+    DebugLog('');
+    DebugLog('=== Data Refresh Complete ===');
+    DebugLog('Unread items: ' + IntToStr(GetUnreadCount(AURL)));
+  except
+    on E: Exception do
+    begin
+      DebugLog('Error refreshing feed data: ' + E.Message);
+      // In folder/all refresh, keep going even if one feed fails.
+      // Do not repaint the HTML panel or clear/reload the post list here.
+    end;
+  end;
+end;
+
+procedure TFormMain.ReloadSelectedFeedItemsAfterBatchRefresh;
+var
+  NodeData: TFeedNodeData;
+  IsYouTubeFeed: Boolean;
+begin
+  NodeData := GetSelectedNodeData;
+  if not Assigned(NodeData) or NodeData.IsFolder then
+    Exit;
+
+  IsYouTubeFeed := Pos('youtube.com', LowerCase(NodeData.FeedURL)) > 0;
+  LoadFeedItemsFromDb(NodeData.FeedURL, IsYouTubeFeed);
 end;
 
 procedure TFormMain.LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean);

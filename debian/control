@@ -31,7 +31,7 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
- libssl-dev
+ libssl-dev, mpv
 Description: Simple, hopefully mobile friendly RSS/Atom reader.
  You can also subscribe to youtube feeds with it. Just paste a
  Youtube user profile URL and tomar will automatically find the
