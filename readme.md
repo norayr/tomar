@@ -17,6 +17,12 @@ apparently it even builds and works in maemo-leste, which makes it very useful t
 
 we specifically made an effort to handle long press as right click so that it would be useful on mobile devices.
 
+![](tomar_desktop0.png)
+
+![](tomar_desktop1.png)
+
+![](tomar_desktop2.png)
+
 ![](tomar_maemo0.png)
 
 ![](tomar_maemo1.png)
@@ -24,5 +30,11 @@ we specifically made an effort to handle long press as right click so that it wo
 ![](tomar_maemo2.png)
 
 ![](tomar_maemo3.png)
+
+![](tomar_maemo4.png)
+
+![](tomar_maemo5.png)
+
+![](tomar_maemo6.png)
 
 
