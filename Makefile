@@ -14,7 +14,7 @@ ifeq ($(UNAME_S),Linux)
 		ARCH := unknown
 	endif
 else
-	ARCH := unknown
+	ARCH ?= unknown
 endif
 
 # print the detected architecture
@@ -23,7 +23,7 @@ $(info ARCH is set to $(ARCH))
 # define the path to lazarus, this is where is it in case of chimaera
 #LAZARUS = "/usr/lib/lazarus/2.0.10"
 #LAZARUS = "/usr/lib/lazarus/2.2.6"
-LAZARUS = "/usr/lib/lazarus/4.0"
+LAZARUS ?= "/usr/lib/lazarus/4.0"
 
 # Define the PATH to include the necessary directories for fpc and fpcres
 CUSTOM_PATH = "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -37,9 +37,6 @@ PREFIX ?= /usr
 DESTDIR ?=
 
 UNITDIR := build/units
-
-# Define the FPC command
-FPC = fpc
 
 # Define the compilation parameters
 PARAMS =  $(PROJECT) -FU$(UNITDIR) -Xs -Xg -MObjFPC -Scgi -O1 -gl -vewnhi -l \
