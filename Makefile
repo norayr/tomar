@@ -35,6 +35,7 @@ OUTFILE = tomar
 FPC ?= fpc
 PREFIX ?= /usr
 DESTDIR ?=
+X_TOOLKIT ?= gtk2
 
 UNITDIR := build/units
 
@@ -42,10 +43,10 @@ UNITDIR := build/units
 PARAMS =  $(PROJECT) -FU$(UNITDIR) -Xs -Xg -MObjFPC -Scgi -O1 -gl -vewnhi -l \
 	-Fu$(LAZARUS)/components/lazutils \
 	-Fu$(LAZARUS)/lcl/units/$(ARCH)/ \
-	-Fu$(LAZARUS)/lcl/units/$(ARCH)/gtk2/ \
+	-Fu$(LAZARUS)/lcl/units/$(ARCH)/$(X_TOOLKIT)/ \
 	-Fu$(LAZARUS)/packager/units/$(ARCH)/ \
 	-Fu$(LAZARUS)/components/turbopower_ipro/ \
-	-Fu. -o$(OUTFILE) -dLCL -dLCLgtk2
+	-Fu. -o$(OUTFILE) -dLCL -dLCL$(X_TOOLKIT)
 
 # Default target to build the project
 all: $(OUTFILE)
