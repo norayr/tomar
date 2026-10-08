@@ -5,20 +5,21 @@ unit FeedListUtils;
 interface
 
 uses
-  Classes, SysUtils, ComCtrls, dbf;
+  Classes, SysUtils, ComCtrls, dbf, FeedDbUtils;
 
 type
   TLogProc = procedure(const S: string) of object;
 
 procedure LoadFeedItemsIntoList(AListView: TListView; AFeedItemsDb, AReadStatusDb: TDbf;
-  const AURL: string; IsYouTubeFeed: Boolean; ALogProc: TLogProc = nil);
+  const AURL: string; IsYouTubeFeed: Boolean; ALogProc: TLogProc = nil;
+  ARecordIndex: TFeedRecordIndex = nil);
 procedure MarkAllListItemsAsRead(AListView: TListView; AReadStatusDb: TDbf;
   const AFeedURL: string; ALogProc: TLogProc = nil);
 
 implementation
 
 uses
-  FeedModel, FeedDbUtils, RssUtils;
+  FeedModel, RssUtils;
 
 function CompareFeedEntriesDescending(Item1, Item2: Pointer): Integer;
 var
@@ -39,17 +40,35 @@ begin
 end;
 
 procedure LoadFeedItemsIntoList(AListView: TListView; AFeedItemsDb, AReadStatusDb: TDbf;
-  const AURL: string; IsYouTubeFeed: Boolean; ALogProc: TLogProc = nil);
+  const AURL: string; IsYouTubeFeed: Boolean; ALogProc: TLogProc;
+  ARecordIndex: TFeedRecordIndex);
 var
   ListItem: TListItem;
   Entries: TList;
   Entry: TFeedListEntry;
   I: Integer;
+  ReadKeys: TStringList;
+  Records: TFeedRecordList;
+
+  procedure AddCurrentEntry;
+  begin
+    Entry := TFeedListEntry.Create;
+    Entry.Title := AFeedItemsDb.FieldByName('TITLE').AsString;
+    Entry.PubDate := AFeedItemsDb.FieldByName('PUBDATE').AsString;
+    Entry.ContentValue := AFeedItemsDb.FieldByName('CONTENT').AsString;
+    Entry.LinkValue := AFeedItemsDb.FieldByName('LINK').AsString;
+    Entry.ItemKeyValue := AFeedItemsDb.FieldByName('ITEMKEY').AsString;
+    Entry.Unread := (ReadKeys.IndexOf(AURL + #9 + Entry.ItemKeyValue) < 0) and
+      ((Entry.LinkValue = '') or (ReadKeys.IndexOf(AURL + #9 + Entry.LinkValue) < 0));
+    Entry.SortKey := FeedDateSortKey(Entry.PubDate);
+    Entries.Add(Entry);
+  end;
 begin
   if not Assigned(AListView) then
     Exit;
 
   Entries := TList.Create;
+  ReadKeys := nil;
   AListView.Items.BeginUpdate;
   try
     AListView.Items.Clear;
@@ -60,23 +79,26 @@ begin
     if AFeedItemsDb.RecordCount = 0 then
       Exit;
 
-    AFeedItemsDb.First;
-    while not AFeedItemsDb.EOF do
+    ReadKeys := FeedDbUtils.BuildReadKeyCache(AReadStatusDb);
+    if Assigned(ARecordIndex) then
     begin
-      if AFeedItemsDb.FieldByName('FEEDURL').AsString = AURL then
+      Records := ARecordIndex.RecordsForFeed(AURL);
+      if Assigned(Records) then
+        for I := 0 to Records.Count - 1 do
+        begin
+          AFeedItemsDb.RecNo := Records[I];
+          AddCurrentEntry;
+        end;
+    end
+    else
+    begin
+      AFeedItemsDb.First;
+      while not AFeedItemsDb.EOF do
       begin
-        Entry := TFeedListEntry.Create;
-        Entry.Title := AFeedItemsDb.FieldByName('TITLE').AsString;
-        Entry.PubDate := AFeedItemsDb.FieldByName('PUBDATE').AsString;
-        Entry.ContentValue := AFeedItemsDb.FieldByName('CONTENT').AsString;
-        Entry.LinkValue := AFeedItemsDb.FieldByName('LINK').AsString;
-        Entry.ItemKeyValue := AFeedItemsDb.FieldByName('ITEMKEY').AsString;
-        Entry.Unread := not FeedDbUtils.IsItemRead(AReadStatusDb, AURL, Entry.ItemKeyValue, Entry.LinkValue, ALogProc);
-        Entry.SortKey := FeedDateSortKey(Entry.PubDate);
-        Entries.Add(Entry);
+        if AFeedItemsDb.FieldByName('FEEDURL').AsString = AURL then
+          AddCurrentEntry;
+        AFeedItemsDb.Next;
       end;
-
-      AFeedItemsDb.Next;
     end;
 
     Entries.Sort(@CompareFeedEntriesDescending);
@@ -105,6 +127,7 @@ begin
     for I := 0 to Entries.Count - 1 do
       TObject(Entries[I]).Free;
     Entries.Free;
+    ReadKeys.Free;
     AListView.Items.EndUpdate;
   end;
 end;

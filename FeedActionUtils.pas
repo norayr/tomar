@@ -5,7 +5,7 @@ unit FeedActionUtils;
 interface
 
 uses
-  Classes, SysUtils, ComCtrls, Forms, FeedModel;
+  Classes, SysUtils, ComCtrls, FeedModel;
 
 type
   TFeedActionProc = procedure(const AFeedURL: string) of object;
@@ -43,7 +43,6 @@ begin
       if Assigned(AAction) then
         AAction(NodeData.FeedURL);
       Inc(Result);
-      Application.ProcessMessages;
     end;
   end;
 end;
@@ -74,7 +73,6 @@ begin
         if Assigned(AAction) then
           AAction(NodeData.FeedURL);
         Inc(Result);
-        Application.ProcessMessages;
       end;
     end;
   end;

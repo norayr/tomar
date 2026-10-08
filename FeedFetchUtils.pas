@@ -202,9 +202,10 @@ var
   Stream: TStringStream;
 begin
   Stream := TStringStream.Create(Response);
+  Doc := nil;
   try
-    ReadXMLFile(Doc, Stream);
     try
+      ReadXMLFile(Doc, Stream);
       IsYouTubeFeed := False;
       if Assigned(Doc.DocumentElement) then
       begin

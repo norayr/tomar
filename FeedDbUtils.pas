@@ -5,29 +5,99 @@ unit FeedDbUtils;
 interface
 
 uses
-  Classes, SysUtils, db, dbf;
+  Classes, SysUtils, db, dbf, fgl;
 
 type
   TLogProc = procedure(const S: string) of object;
+  TFeedRecordList = specialize TFPGList<Integer>;
+
+  // Record numbers grouped by feed, owned and accessed only by the UI thread.
+  TFeedRecordIndex = class
+  private
+    FFeeds: TStringList;
+  public
+    constructor Create(AFeedItemsDb: TDbf);
+    destructor Destroy; override;
+    procedure AddRecord(const AFeedURL: string; ARecordNo: Integer);
+    function RecordsForFeed(const AFeedURL: string): TFeedRecordList;
+  end;
 
 procedure InitializeDatabases(out AReadStatusDb, AFeedItemsDb: TDbf; const ADataPath: string);
 procedure MarkFeedItemsAsNotSeen(AFeedItemsDb: TDbf; const AURL: string);
+// -1 searches for the item; 0 appends; a positive record number updates directly.
 procedure SaveOrUpdateFeedItem(AFeedItemsDb: TDbf;
-  const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string);
+  const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string;
+  ARecordNo: Integer = -1);
 function IsItemRead(AReadStatusDb: TDbf; const AFeedURL, AItemKey: string;
   const ALegacyLink: string = ''; ALogProc: TLogProc = nil): Boolean;
 procedure MarkItemAsRead(AReadStatusDb: TDbf; const AFeedURL, AItemKey: string;
   const ALegacyLink: string = ''; ALogProc: TLogProc = nil);
+procedure MarkAllFeedItemsAsRead(AFeedItemsDb, AReadStatusDb: TDbf; const AFeedURL: string);
 function BuildReadKeyCache(AReadStatusDb: TDbf): TStringList;
 function FindCountIndex(ACounts: TStringList; const AFeedURL: string): Integer;
 function GetCountValue(ACounts: TStringList; const AFeedURL: string): Integer;
 procedure IncrementCountValue(ACounts: TStringList; const AFeedURL: string);
-function GetUnreadCount(AFeedItemsDb, AReadStatusDb: TDbf; const AFeedURL: string): Integer;
+function GetUnreadCount(AFeedItemsDb, AReadStatusDb: TDbf; const AFeedURL: string;
+  ARecordIndex: TFeedRecordIndex = nil): Integer;
 
 implementation
 
 uses
   md5;
+
+constructor TFeedRecordIndex.Create(AFeedItemsDb: TDbf);
+var
+  URLField: TField;
+begin
+  inherited Create;
+  FFeeds := TStringList.Create;
+  FFeeds.CaseSensitive := True;
+  FFeeds.Sorted := True;
+  if not Assigned(AFeedItemsDb) or not AFeedItemsDb.Active then Exit;
+  URLField := AFeedItemsDb.FieldByName('FEEDURL');
+  AFeedItemsDb.First;
+  while not AFeedItemsDb.EOF do
+  begin
+    AddRecord(URLField.AsString, AFeedItemsDb.RecNo);
+    AFeedItemsDb.Next;
+  end;
+end;
+
+destructor TFeedRecordIndex.Destroy;
+var
+  I: Integer;
+begin
+  if Assigned(FFeeds) then
+    for I := 0 to FFeeds.Count - 1 do
+      FFeeds.Objects[I].Free;
+  FFeeds.Free;
+  inherited Destroy;
+end;
+
+procedure TFeedRecordIndex.AddRecord(const AFeedURL: string; ARecordNo: Integer);
+var
+  I: Integer;
+  Records: TFeedRecordList;
+begin
+  I := FFeeds.IndexOf(AFeedURL);
+  if I < 0 then
+  begin
+    Records := TFeedRecordList.Create;
+    FFeeds.AddObject(AFeedURL, Records);
+  end
+  else
+    Records := TFeedRecordList(FFeeds.Objects[I]);
+  Records.Add(ARecordNo);
+end;
+
+function TFeedRecordIndex.RecordsForFeed(const AFeedURL: string): TFeedRecordList;
+var
+  I: Integer;
+begin
+  I := FFeeds.IndexOf(AFeedURL);
+  if I < 0 then Result := nil
+  else Result := TFeedRecordList(FFeeds.Objects[I]);
+end;
 
 procedure LogMessage(ALogProc: TLogProc; const S: string);
 begin
@@ -117,24 +187,30 @@ begin
 end;
 
 procedure SaveOrUpdateFeedItem(AFeedItemsDb: TDbf;
-  const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string);
+  const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string;
+  ARecordNo: Integer);
 var
   Found: Boolean;
 begin
   if not Assigned(AFeedItemsDb) or not AFeedItemsDb.Active then
     Exit;
 
-  Found := False;
-  AFeedItemsDb.First;
-  while not AFeedItemsDb.EOF do
+  Found := ARecordNo > 0;
+  if Found then
+    AFeedItemsDb.RecNo := ARecordNo
+  else if ARecordNo < 0 then
   begin
-    if (AFeedItemsDb.FieldByName('FEEDURL').AsString = AFeedURL) and
-       (AFeedItemsDb.FieldByName('ITEMKEY').AsString = AItemKey) then
+    AFeedItemsDb.First;
+    while not AFeedItemsDb.EOF do
     begin
-      Found := True;
-      Break;
+      if (AFeedItemsDb.FieldByName('FEEDURL').AsString = AFeedURL) and
+         (AFeedItemsDb.FieldByName('ITEMKEY').AsString = AItemKey) then
+      begin
+        Found := True;
+        Break;
+      end;
+      AFeedItemsDb.Next;
     end;
-    AFeedItemsDb.Next;
   end;
 
   if Found then
@@ -252,11 +328,26 @@ begin
       'NOTE: RecordCount did not increase (may be normal); rely on IsItemRead verification above');
 end;
 
+procedure MarkAllFeedItemsAsRead(AFeedItemsDb, AReadStatusDb: TDbf; const AFeedURL: string);
+begin
+  if not Assigned(AFeedItemsDb) or not AFeedItemsDb.Active then Exit;
+  AFeedItemsDb.First;
+  while not AFeedItemsDb.EOF do
+  begin
+    if AFeedItemsDb.FieldByName('FEEDURL').AsString = AFeedURL then
+      MarkItemAsRead(AReadStatusDb, AFeedURL,
+        AFeedItemsDb.FieldByName('ITEMKEY').AsString,
+        AFeedItemsDb.FieldByName('LINK').AsString);
+    AFeedItemsDb.Next;
+  end;
+end;
+
 function BuildReadKeyCache(AReadStatusDb: TDbf): TStringList;
 var
   CacheKey: string;
 begin
   Result := TStringList.Create;
+  Result.CaseSensitive := True;
   Result.Sorted := True;
   Result.Duplicates := dupIgnore;
 
@@ -320,11 +411,25 @@ begin
   end;
 end;
 
-function GetUnreadCount(AFeedItemsDb, AReadStatusDb: TDbf; const AFeedURL: string): Integer;
+function GetUnreadCount(AFeedItemsDb, AReadStatusDb: TDbf; const AFeedURL: string;
+  ARecordIndex: TFeedRecordIndex): Integer;
 var
   ReadKeys: TStringList;
   FeedURL, LinkValue, ItemKeyValue: string;
   ReadKey1, ReadKey2: string;
+  Records: TFeedRecordList;
+  I: Integer;
+
+  procedure CountCurrentRecord;
+  begin
+    LinkValue := AFeedItemsDb.FieldByName('LINK').AsString;
+    ItemKeyValue := AFeedItemsDb.FieldByName('ITEMKEY').AsString;
+    ReadKey1 := AFeedURL + #9 + ItemKeyValue;
+    ReadKey2 := AFeedURL + #9 + LinkValue;
+    if (ReadKeys.IndexOf(ReadKey1) < 0) and
+       ((LinkValue = '') or (ReadKeys.IndexOf(ReadKey2) < 0)) then
+      Inc(Result);
+  end;
 begin
   Result := 0;
 
@@ -336,20 +441,23 @@ begin
 
   ReadKeys := BuildReadKeyCache(AReadStatusDb);
   try
+    if Assigned(ARecordIndex) then
+    begin
+      Records := ARecordIndex.RecordsForFeed(AFeedURL);
+      if Assigned(Records) then
+        for I := 0 to Records.Count - 1 do
+        begin
+          AFeedItemsDb.RecNo := Records[I];
+          CountCurrentRecord;
+        end;
+      Exit;
+    end;
     AFeedItemsDb.First;
     while not AFeedItemsDb.EOF do
     begin
       FeedURL := AFeedItemsDb.FieldByName('FEEDURL').AsString;
       if FeedURL = AFeedURL then
-      begin
-        LinkValue := AFeedItemsDb.FieldByName('LINK').AsString;
-        ItemKeyValue := AFeedItemsDb.FieldByName('ITEMKEY').AsString;
-        ReadKey1 := AFeedURL + #9 + ItemKeyValue;
-        ReadKey2 := AFeedURL + #9 + LinkValue;
-        if (ReadKeys.IndexOf(ReadKey1) < 0) and
-           ((LinkValue = '') or (ReadKeys.IndexOf(ReadKey2) < 0)) then
-          Inc(Result);
-      end;
+        CountCurrentRecord;
       AFeedItemsDb.Next;
     end;
   finally

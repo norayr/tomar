@@ -10,7 +10,7 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
   ExtCtrls, Menus, Process, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
-  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils, FeedListUtils
+  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils, FeedListUtils, FeedRefreshThread, FeedDbUtils
   {$IFDEF LCLGTK2}
   , x, Gtk2, Gdk2, Gdk2x, xatom
   {$ENDIF};
@@ -58,6 +58,17 @@ type
     FFeedItemsDb: TDbf;
     FLoadingFeed: Boolean; // Flag to prevent selection during loading
     FInSelectItem: Boolean;
+    FAddFeedButton, FAddFolderButton, FRefreshAllButton: TButton;
+    FRefreshStatus: TLabel;
+    FRefreshTimer: TTimer;
+    FRefreshThread: TFeedRefreshThread;
+    FRefreshing, FClosing: Boolean;
+    FRefreshSucceeded, FRefreshFailed: Integer;
+    FRefreshErrors: TStringList;
+    FFeedRecords: TFeedRecordIndex;
+    FApplyingResult: TFeedRefreshResult;
+    FApplyKeys: TStringList;
+    FApplyExistingCount, FApplyExistingPosition, FApplyItemPosition: Integer;
 {$IFDEF RSSREADER_DEBUG}
     FDebugLog: TStringList;  // Debug log (optional)
 {$ENDIF}
@@ -103,17 +114,17 @@ type
     procedure MenuMarkAllReadClick(Sender: TObject);
     procedure MenuShowDebugLogClick(Sender: TObject);
     procedure ListViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
-    procedure RefreshFeedAction(const AFeedURL: string);
     procedure MarkFeedReadAction(const AFeedURL: string);
+    procedure UpdateRefreshActions(AUpdateMenus: Boolean = True);
+    procedure StartFeedRefresh(ARootNode: TTreeNode);
+    procedure RefreshTimerTick(Sender: TObject);
+    procedure BeginApplyFeedRefreshResult(AResult: TFeedRefreshResult);
+    function ApplyFeedRefreshResult: Boolean;
 
     procedure LoadFeedList;
     procedure SaveFeedList;
-    procedure LoadRSSFeed(const AURL: string);
-    procedure LoadRSSFeedDataOnly(const AURL: string);
-    procedure ReloadSelectedFeedItemsAfterBatchRefresh;
-    procedure LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean);
-    procedure MarkFeedItemsAsNotSeen(const AURL: string);
-    procedure SaveOrUpdateFeedItem(const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string);
+    procedure LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean;
+      APreserveSelection: Boolean = False);
     function MakeItemKey(const AGuid, AId, ALink, ATitle, APubDate: string): string;
     function GetSelectedNodeData: TFeedNodeData;
     procedure FreeNodeData(Node: TTreeNode);
@@ -144,7 +155,7 @@ implementation
 {$R *.lfm}
 
 uses
-  LCLType, LCLIntf, BaseUnix, RssUtils, FeedDbUtils, FeedTreeUtils, FeedActionUtils;
+  LCLType, LCLIntf, BaseUnix, RssUtils, FeedTreeUtils, FeedActionUtils;
   //FeedDBCleanup;
 
 
@@ -228,6 +239,9 @@ begin
 
   FDataProvider := TCustomHtmlDataProvider.Create(Self);
   FLoadingFeed := False;
+  FRefreshing := False;
+  FClosing := False;
+  FRefreshErrors := TStringList.Create;
   FCurrentVideoURL := '';
   FYoutubePlayerAvailable := CanWatchYouTubeLocally;
 
@@ -258,6 +272,15 @@ var
   i: Integer;
   Node: TTreeNode;
 begin
+  FClosing := True;
+  FreeAndNil(FRefreshTimer);
+  // The worker never accesses the form or DBF objects. Join it before cleanup.
+  FreeAndNil(FRefreshThread);
+  FreeAndNil(FApplyingResult);
+  FreeAndNil(FApplyKeys);
+  FreeAndNil(FFeedRecords);
+  FreeAndNil(FRefreshErrors);
+
   // Free all node data
   if Assigned(FTreeView) then
   begin
@@ -299,7 +322,6 @@ end;
 procedure TFormMain.CreateControls;
 var
   LeftToolbar: TPanel;
-  BtnAddFeed, BtnAddFolder, BtnRefreshAll: TButton;
   MenuItem: TMenuItem;
 begin
   // Left Panel with TreeView
@@ -320,32 +342,46 @@ begin
   LeftToolbar.Caption := '';
   LeftToolbar.BevelOuter := bvNone;
 
-  BtnAddFeed := TButton.Create(Self);
-  BtnAddFeed.Parent := LeftToolbar;
-  BtnAddFeed.Align := alLeft;
-  BtnAddFeed.Width := 58;
-  BtnAddFeed.Caption := '＋📰';
-  BtnAddFeed.Hint := 'Add feed';
-  BtnAddFeed.ShowHint := True;
-  BtnAddFeed.OnClick := @MenuAddFeedClick;
+  FAddFeedButton := TButton.Create(Self);
+  FAddFeedButton.Parent := LeftToolbar;
+  FAddFeedButton.Align := alLeft;
+  FAddFeedButton.Width := 58;
+  FAddFeedButton.Caption := '＋📰';
+  FAddFeedButton.Hint := 'Add feed';
+  FAddFeedButton.ShowHint := True;
+  FAddFeedButton.OnClick := @MenuAddFeedClick;
 
-  BtnAddFolder := TButton.Create(Self);
-  BtnAddFolder.Parent := LeftToolbar;
-  BtnAddFolder.Align := alLeft;
-  BtnAddFolder.Width := 58;
-  BtnAddFolder.Caption := '＋📁';
-  BtnAddFolder.Hint := 'Add folder';
-  BtnAddFolder.ShowHint := True;
-  BtnAddFolder.OnClick := @MenuAddFolderClick;
+  FAddFolderButton := TButton.Create(Self);
+  FAddFolderButton.Parent := LeftToolbar;
+  FAddFolderButton.Align := alLeft;
+  FAddFolderButton.Width := 58;
+  FAddFolderButton.Caption := '＋📁';
+  FAddFolderButton.Hint := 'Add folder';
+  FAddFolderButton.ShowHint := True;
+  FAddFolderButton.OnClick := @MenuAddFolderClick;
 
-  BtnRefreshAll := TButton.Create(Self);
-  BtnRefreshAll.Parent := LeftToolbar;
-  BtnRefreshAll.Align := alLeft;
-  BtnRefreshAll.Width := 48;
-  BtnRefreshAll.Caption := '⟳';
-  BtnRefreshAll.Hint := 'Refresh all feeds';
-  BtnRefreshAll.ShowHint := True;
-  BtnRefreshAll.OnClick := @MenuRefreshAllClick;
+  FRefreshAllButton := TButton.Create(Self);
+  FRefreshAllButton.Parent := LeftToolbar;
+  FRefreshAllButton.Align := alLeft;
+  FRefreshAllButton.Width := 48;
+  FRefreshAllButton.Caption := '⟳';
+  FRefreshAllButton.Hint := 'Refresh all feeds';
+  FRefreshAllButton.ShowHint := True;
+  FRefreshAllButton.OnClick := @MenuRefreshAllClick;
+
+  FRefreshStatus := TLabel.Create(Self);
+  FRefreshStatus.Parent := FLeftPanel;
+  FRefreshStatus.Align := alBottom;
+  FRefreshStatus.AutoSize := False;
+  FRefreshStatus.Height := 36;
+  FRefreshStatus.WordWrap := True;
+  FRefreshStatus.Caption := '';
+  FRefreshStatus.ShowHint := True;
+
+  FRefreshTimer := TTimer.Create(Self);
+  FRefreshTimer.Enabled := False;
+  FRefreshTimer.Interval := 20;
+  FRefreshTimer.OnTimer := @RefreshTimerTick;
 
   FTreeView := TTreeView.Create(Self);
   FTreeView.Parent := FLeftPanel;
@@ -1181,7 +1217,7 @@ begin
               FListView.Invalidate;
               FListView.Update;
             // Update tree node text
-            FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb);
+            FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb, FFeedRecords);
           end;
         end;
       end;
@@ -1425,7 +1461,7 @@ begin
       MarkItemAsRead(FeedURL, ItemKey, ItemLink);
       Item.Data := nil; // Mark as read in ListView
       // Update tree node text
-      FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb);
+      FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb, FFeedRecords);
     end;
 
   finally
@@ -1457,7 +1493,6 @@ end;
 
 procedure TFormMain.TreeViewPopup(Sender: TObject);
 var
-  NodeData: TFeedNodeData;
   Node: TTreeNode;
   MoveMenu, Item: TMenuItem;
 
@@ -1489,26 +1524,11 @@ var
     end;
   end;
 begin
-  // Enable/disable menu items based on selection
-  NodeData := GetSelectedNodeData;
-
-  // Refresh Feed (index 3) - only available for feeds, not folders
-  FPopupMenu.Items[3].Enabled := Assigned(NodeData) and not NodeData.IsFolder;
-
-  // Refresh Feeds (index 4) - only available for folders, not feeds
-  FPopupMenu.Items[4].Enabled := Assigned(NodeData) and NodeData.IsFolder;
-
-  // Refresh All Feeds (index 5) - always available
-  FPopupMenu.Items[5].Enabled := True;
-
-  // Mark All Read (index 6) - available for both feeds and folders
-  FPopupMenu.Items[6].Enabled := Assigned(NodeData);
-
+  UpdateRefreshActions;
   Node := FTreeView.Selected;
-  FPopupMenu.Items[8].Enabled := Assigned(Node) and Assigned(Node.Parent);
   MoveMenu := FPopupMenu.Items[9];
   MoveMenu.Clear;
-  if Assigned(Node) then
+  if Assigned(Node) and not FRefreshing then
   begin
     AddDestination('Top level', nil);
     AddFolderDestinations(FTreeView.Items.GetFirstNode);
@@ -1522,10 +1542,14 @@ procedure TFormMain.MenuMoveUpClick(Sender: TObject);
 var
   Node, NewParent: TTreeNode;
 begin
+  if FRefreshing or FClosing then Exit;
   Node := FTreeView.Selected;
   if not Assigned(Node) or not Assigned(Node.Parent) then Exit;
   NewParent := Node.Parent.Parent;
-  Node.MoveTo(NewParent, naAddChild);
+  if Assigned(NewParent) then
+    Node.MoveTo(NewParent, naAddChild)
+  else
+    Node.MoveTo(nil, naAdd);
   FTreeView.Selected := Node;
   SaveFeedList;
 end;
@@ -1535,6 +1559,7 @@ var
   Node, Destination: TTreeNode;
   DestinationTag: PtrInt;
 begin
+  if FRefreshing or FClosing then Exit;
   Node := FTreeView.Selected;
   if not Assigned(Node) or not (Sender is TMenuItem) then Exit;
   DestinationTag := TMenuItem(Sender).Tag;
@@ -1557,6 +1582,7 @@ var
   FolderName: string;
   NodeData: TFeedNodeData;
 begin
+  if FRefreshing or FClosing then Exit;
   FolderName := InputBox('Add Folder', 'Folder name:', '');
   if FolderName = '' then
     Exit;
@@ -1579,6 +1605,7 @@ var
   NodeData: TFeedNodeData;
   ParentNode: TTreeNode;
 begin
+  if FRefreshing or FClosing then Exit;
   FeedName := InputBox('Add Feed', 'Feed name:', '');
   if FeedName = '' then
     Exit;
@@ -1616,6 +1643,7 @@ var
   NodeData: TFeedNodeData;
   FeedURL: string;
 begin
+  if FRefreshing or FClosing then Exit;
   Node := FTreeView.Selected;
   if Node = nil then
     Exit;
@@ -1649,67 +1677,281 @@ begin
   end;
 end;
 
-procedure TFormMain.RefreshFeedAction(const AFeedURL: string);
-begin
-  LoadRSSFeedDataOnly(AFeedURL);
-end;
-
 procedure TFormMain.MarkFeedReadAction(const AFeedURL: string);
 begin
-  LoadRSSFeed(AFeedURL);
-  MarkAllItemsAsRead(AFeedURL);
+  FeedDbUtils.MarkAllFeedItemsAsRead(FFeedItemsDb, FReadStatusDb, AFeedURL);
+end;
+
+procedure TFormMain.UpdateRefreshActions(AUpdateMenus: Boolean);
+var
+  Node: TTreeNode;
+  NodeData: TFeedNodeData;
+  CanChange: Boolean;
+begin
+  CanChange := not FRefreshing and not FClosing;
+  FAddFeedButton.Enabled := CanChange;
+  FAddFolderButton.Enabled := CanChange;
+  FRefreshAllButton.Enabled := CanChange;
+  if not AUpdateMenus then Exit;
+  Node := FTreeView.Selected;
+  NodeData := GetSelectedNodeData;
+  FPopupMenu.Items[0].Enabled := CanChange;
+  FPopupMenu.Items[1].Enabled := CanChange;
+  FPopupMenu.Items[3].Enabled := CanChange and Assigned(NodeData) and not NodeData.IsFolder;
+  FPopupMenu.Items[4].Enabled := CanChange and Assigned(NodeData) and NodeData.IsFolder;
+  FPopupMenu.Items[5].Enabled := CanChange;
+  FPopupMenu.Items[6].Enabled := CanChange and Assigned(NodeData);
+  FPopupMenu.Items[7].Enabled := CanChange and Assigned(Node);
+  FPopupMenu.Items[8].Enabled := CanChange and Assigned(Node) and Assigned(Node.Parent);
+  FPopupMenu.Items[9].Enabled := CanChange and Assigned(Node);
+end;
+
+procedure TFormMain.StartFeedRefresh(ARootNode: TTreeNode);
+var
+  URLs: TStringList;
+  I: Integer;
+  Node: TTreeNode;
+  NodeData: TFeedNodeData;
+begin
+  if FRefreshing or FClosing then Exit;
+  URLs := TStringList.Create;
+  try
+    // Snapshot URLs on the UI thread; the worker never holds tree-node pointers.
+    for I := 0 to FTreeView.Items.Count - 1 do
+    begin
+      Node := FTreeView.Items[I];
+      if Assigned(ARootNode) and (Node <> ARootNode) and
+         not Node.HasAsParent(ARootNode) then
+        Continue;
+      NodeData := TFeedNodeData(Node.Data);
+      if Assigned(NodeData) and not NodeData.IsFolder then
+        URLs.Add(NodeData.FeedURL);
+    end;
+    if URLs.Count = 0 then
+    begin
+      FRefreshStatus.Caption := 'No feeds to refresh.';
+      FRefreshStatus.Hint := '';
+      Exit;
+    end;
+
+    try
+      FRefreshThread := TFeedRefreshThread.Create(URLs);
+      FRefreshSucceeded := 0;
+      FRefreshFailed := 0;
+      FRefreshErrors.Clear;
+      FRefreshing := True;
+      // Don't change the activating GTK popup while it is dispatching OnClick.
+      // Handlers are already guarded; menu state updates on the next timer tick.
+      UpdateRefreshActions(False);
+      FRefreshStatus.Caption := Format('Refreshing 0/%d feeds...', [FRefreshThread.TotalFeeds]);
+      FRefreshStatus.Hint := '';
+      FRefreshThread.Start;
+      FRefreshTimer.Enabled := True;
+    except
+      on E: Exception do
+      begin
+        FreeAndNil(FRefreshThread);
+        FRefreshing := False;
+        UpdateRefreshActions;
+        FRefreshStatus.Caption := 'Could not start refresh.';
+        FRefreshStatus.Hint := E.Message;
+        ShowMessage('Could not start feed refresh: ' + E.Message);
+      end;
+    end;
+  finally
+    URLs.Free;
+  end;
+end;
+
+procedure TFormMain.BeginApplyFeedRefreshResult(AResult: TFeedRefreshResult);
+var
+  Records: TFeedRecordList;
+begin
+  FApplyingResult := AResult;
+  FApplyKeys := TStringList.Create;
+  FApplyKeys.CaseSensitive := True;
+  FApplyKeys.Sorted := True;
+  FApplyKeys.Duplicates := dupIgnore;
+  FApplyExistingPosition := 0;
+  FApplyItemPosition := 0;
+  Records := FFeedRecords.RecordsForFeed(AResult.FeedURL);
+  if Assigned(Records) then FApplyExistingCount := Records.Count
+  else FApplyExistingCount := 0;
+end;
+
+function TFormMain.ApplyFeedRefreshResult: Boolean;
+const
+  MaxOperations = 64;
+  TimeBudgetMs = 8;
+var
+  I, KeyIndex, RecordNo, Operations: Integer;
+  Started: QWord;
+  Entry: TFeedListEntry;
+  NodeData: TFeedNodeData;
+  Records: TFeedRecordList;
+begin
+  Result := False;
+  Started := GetTickCount64;
+  Operations := 0;
+  Records := FFeedRecords.RecordsForFeed(FApplyingResult.FeedURL);
+  // Visit existing records once, not the entire database once per new item.
+  // Every slice sets RecNo explicitly: browsing can move the DBF cursor between ticks.
+  while FApplyExistingPosition < FApplyExistingCount do
+  begin
+    FFeedItemsDb.RecNo := Records[FApplyExistingPosition];
+    FApplyKeys.AddObject(FFeedItemsDb.FieldByName('ITEMKEY').AsString,
+      TObject(Pointer(PtrInt(FFeedItemsDb.RecNo))));
+    if FFeedItemsDb.FieldByName('INLASTFETCH').AsBoolean then
+    begin
+      FFeedItemsDb.Edit;
+      FFeedItemsDb.FieldByName('INLASTFETCH').AsBoolean := False;
+      FFeedItemsDb.Post;
+    end;
+    Inc(FApplyExistingPosition);
+    Inc(Operations);
+    if (Operations >= MaxOperations) or (GetTickCount64 - Started >= TimeBudgetMs) then Exit;
+  end;
+
+  while FApplyItemPosition < FApplyingResult.Items.Count do
+  begin
+    Entry := TFeedListEntry(FApplyingResult.Items[FApplyItemPosition]);
+    KeyIndex := FApplyKeys.IndexOf(Entry.ItemKeyValue);
+    if KeyIndex >= 0 then RecordNo := PtrInt(Pointer(FApplyKeys.Objects[KeyIndex]))
+    else RecordNo := 0;
+    FeedDbUtils.SaveOrUpdateFeedItem(FFeedItemsDb, FApplyingResult.FeedURL,
+      Entry.ItemKeyValue, Entry.Title, Entry.PubDate, Entry.ContentValue,
+      Entry.LinkValue, RecordNo);
+    if RecordNo = 0 then
+    begin
+      FFeedRecords.AddRecord(FApplyingResult.FeedURL, FFeedItemsDb.RecNo);
+      FApplyKeys.AddObject(Entry.ItemKeyValue, TObject(Pointer(PtrInt(FFeedItemsDb.RecNo))));
+    end;
+    Inc(FApplyItemPosition);
+    Inc(Operations);
+    if (Operations >= MaxOperations) or (GetTickCount64 - Started >= TimeBudgetMs) then Exit;
+  end;
+
+  // Only this feed's counts changed; don't rescan every feed after each result.
+  for I := 0 to FTreeView.Items.Count - 1 do
+  begin
+    NodeData := TFeedNodeData(FTreeView.Items[I].Data);
+    if Assigned(NodeData) and not NodeData.IsFolder and
+       (NodeData.FeedURL = FApplyingResult.FeedURL) then
+      FeedTreeUtils.UpdateFeedNodeText(FTreeView.Items[I], FFeedItemsDb, FReadStatusDb, FFeedRecords);
+  end;
+  NodeData := GetSelectedNodeData;
+  if Assigned(NodeData) and not NodeData.IsFolder and
+     (NodeData.FeedURL = FApplyingResult.FeedURL) then
+    LoadFeedItemsFromDb(FApplyingResult.FeedURL, FApplyingResult.IsYouTubeFeed, True);
+  Result := True;
+end;
+
+procedure TFormMain.RefreshTimerTick(Sender: TObject);
+var
+  FeedResult: TFeedRefreshResult;
+  WorkerDone: Boolean;
+  WorkerError: string;
+  ApplyDone: Boolean;
+begin
+  if FClosing or not Assigned(FRefreshThread) then Exit;
+  UpdateRefreshActions;
+
+  // Read Done first: observing completion then an empty queue guarantees that
+  // no last result can arrive between TakeResult and finishing the refresh.
+  WorkerDone := FRefreshThread.Done;
+  if not Assigned(FApplyingResult) then
+  begin
+    FeedResult := FRefreshThread.TakeResult;
+    if Assigned(FeedResult) then
+      BeginApplyFeedRefreshResult(FeedResult);
+  end;
+  FeedResult := FApplyingResult;
+  if Assigned(FeedResult) then
+  begin
+    ApplyDone := FeedResult.ErrorMessage <> '';
+    if not ApplyDone then
+    begin
+      try
+        ApplyDone := ApplyFeedRefreshResult;
+      except
+        on E: Exception do
+        begin
+          if FFeedItemsDb.State in [dsEdit, dsInsert] then
+            FFeedItemsDb.Cancel;
+          FeedResult.ErrorMessage := E.Message;
+          ApplyDone := True;
+        end;
+      end;
+    end;
+    if not ApplyDone then
+    begin
+      FRefreshStatus.Caption := Format('Saving %d/%d items...',
+        [FApplyItemPosition, FeedResult.Items.Count]);
+      Exit;
+    end;
+    try
+      if FeedResult.ErrorMessage = '' then
+      begin
+        Inc(FRefreshSucceeded);
+      end
+      else
+      begin
+        Inc(FRefreshFailed);
+        FRefreshErrors.Add(FeedResult.FeedURL + ': ' + FeedResult.ErrorMessage);
+        DebugLog(FRefreshErrors[FRefreshErrors.Count - 1]);
+      end;
+    finally
+      FreeAndNil(FApplyingResult);
+      FreeAndNil(FApplyKeys);
+    end;
+    // Apply at most one feed per tick so UI events can run between feeds.
+    FRefreshStatus.Caption := Format('Refreshing %d/%d feeds...',
+      [FRefreshSucceeded + FRefreshFailed, FRefreshThread.TotalFeeds]);
+    Exit;
+  end;
+
+  if not WorkerDone then Exit;
+  FRefreshTimer.Enabled := False;
+  WorkerError := FRefreshThread.ErrorMessage;
+  if WorkerError <> '' then
+  begin
+    FRefreshErrors.Add(WorkerError);
+    FRefreshFailed := FRefreshThread.TotalFeeds - FRefreshSucceeded;
+  end;
+  FreeAndNil(FRefreshThread);
+  FRefreshing := False;
+  UpdateRefreshActions;
+  FRefreshStatus.Caption := Format('Refreshed %d feeds.', [FRefreshSucceeded]);
+  if FRefreshFailed > 0 then
+    FRefreshStatus.Caption := FRefreshStatus.Caption + Format(' %d failed.', [FRefreshFailed]);
+  FRefreshStatus.Hint := FRefreshErrors.Text;
 end;
 
 procedure TFormMain.MenuRefreshClick(Sender: TObject);
 var
   NodeData: TFeedNodeData;
 begin
+  if FRefreshing or FClosing then Exit;
   NodeData := GetSelectedNodeData;
   if Assigned(NodeData) and not NodeData.IsFolder then
-    LoadRSSFeed(NodeData.FeedURL);
+    StartFeedRefresh(FTreeView.Selected);
 end;
 
 procedure TFormMain.MenuRefreshFeedsClick(Sender: TObject);
 var
   NodeData: TFeedNodeData;
-  RefreshCount: Integer;
 begin
+  if FRefreshing or FClosing then Exit;
   NodeData := GetSelectedNodeData;
   if not Assigned(NodeData) or not NodeData.IsFolder then
     Exit;
 
-  RefreshCount := FeedActionUtils.RefreshFeedsInSubtree(FTreeView.Selected, @RefreshFeedAction);
-
-  if RefreshCount > 0 then
-  begin
-    FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
-    ReloadSelectedFeedItemsAfterBatchRefresh;
-    ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds in folder.');
-  end
-  else
-    ShowMessage('No feeds found in folder.');
+  StartFeedRefresh(FTreeView.Selected);
 end;
 
 procedure TFormMain.MenuRefreshAllClick(Sender: TObject);
-var
-  RefreshCount: Integer;
 begin
-  if not Assigned(FTreeView) or (FTreeView.Items.Count = 0) then
-  begin
-    ShowMessage('No feeds to refresh.');
-    Exit;
-  end;
-
-  RefreshCount := FeedActionUtils.RefreshAllFeeds(FTreeView, @RefreshFeedAction);
-
-  if RefreshCount > 0 then
-  begin
-    FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
-    ReloadSelectedFeedItemsAfterBatchRefresh;
-    ShowMessage('Refreshed ' + IntToStr(RefreshCount) + ' feeds.');
-  end
-  else
-    ShowMessage('No feeds to refresh.');
+  StartFeedRefresh(nil);
 end;
 
 procedure TFormMain.LoadFeedList;
@@ -1727,125 +1969,37 @@ begin
   SaveFeedTreeToConfig(FTreeView);
 end;
 
-procedure TFormMain.LoadRSSFeed(const AURL: string);
+procedure TFormMain.LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean;
+  APreserveSelection: Boolean);
 var
-  Response: string;
-  IsYouTubeFeed: Boolean;
+  I: Integer;
+  SelectedKey: string;
+  WasLoading, WasSelecting: Boolean;
 begin
-{$IFDEF RSSREADER_DEBUG}
-  FDebugLog.Clear;
-{$ENDIF}
-  DebugLog('=== Loading Feed ===');
-  DebugLog(Format('AURL parameter: "%s"', [AURL]));
-  DebugLog('');
-
+  SelectedKey := '';
+  if APreserveSelection and Assigned(FListView.Selected) and
+     (FListView.Selected.SubItems.Count > 3) then
+    SelectedKey := FListView.Selected.SubItems[3];
+  WasLoading := FLoadingFeed;
+  WasSelecting := FInSelectItem;
   FLoadingFeed := True;
-  FListView.Items.Clear;
-  FHtmlPanel.SetHTMLFromStr('<html><body><p>Loading...</p></body></html>');
-  Application.ProcessMessages;
-
+  FInSelectItem := True;
   try
-    try
-      Response := FHttpClient.Get(AURL);
-    except
-      on E: Exception do
-      begin
-        FLoadingFeed := False;
-        ShowMessage('Failed to connect to feed:' + LineEnding + LineEnding +
-                    AURL + LineEnding + LineEnding +
-                    'Error: ' + E.Message);
-        FHtmlPanel.SetHTMLFromStr('<html><body><p style="color:red;">Connection failed: ' +
-                                  E.Message + '</p></body></html>');
-        Exit;
-      end;
-    end;
-
-    try
-      ParseFeedResponse(AURL, Response, @MarkFeedItemsAsNotSeen, @SaveOrUpdateFeedItem, IsYouTubeFeed);
-
-      LoadFeedItemsFromDb(AURL, IsYouTubeFeed);
-
-      if FListView.Items.Count = 0 then
-        FHtmlPanel.SetHTMLFromStr('<html><body><p>No items found in feed.</p></body></html>')
-      else
-        FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an item to view its content.</p></body></html>');
-
-      FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
-
-      FLoadingFeed := False;
-
-      DebugLog('');
-      DebugLog('=== Load Complete ===');
-      DebugLog('Total items loaded from DB: ' + IntToStr(FListView.Items.Count));
-      DebugLog('Unread items: ' + IntToStr(GetUnreadCount(AURL)));
-    except
-      on E: Exception do
-      begin
-        FLoadingFeed := False;
-        ShowMessage('Error loading feed: ' + E.Message);
-        FHtmlPanel.SetHTMLFromStr('<html><body><p style="color:red;">Error loading feed: ' +
-                                  E.Message + '</p></body></html>');
-      end;
-    end;
+    FeedListUtils.LoadFeedItemsIntoList(FListView, FFeedItemsDb, FReadStatusDb,
+      AURL, IsYouTubeFeed, @DebugLog, FFeedRecords);
+    // Rebuilding the list must not mark an item read or replace its open content.
+    if SelectedKey <> '' then
+      for I := 0 to FListView.Items.Count - 1 do
+        if FListView.Items[I].SubItems[3] = SelectedKey then
+        begin
+          FListView.Selected := FListView.Items[I];
+          FListView.ItemFocused := FListView.Items[I];
+          Break;
+        end;
   finally
+    FInSelectItem := WasSelecting;
+    FLoadingFeed := WasLoading;
   end;
-end;
-
-procedure TFormMain.LoadRSSFeedDataOnly(const AURL: string);
-var
-  Response: string;
-  IsYouTubeFeed: Boolean;
-begin
-{$IFDEF RSSREADER_DEBUG}
-  FDebugLog.Clear;
-{$ENDIF}
-  DebugLog('=== Refreshing Feed Data Only ===');
-  DebugLog(Format('AURL parameter: "%s"', [AURL]));
-  DebugLog('');
-
-  try
-    Response := FHttpClient.Get(AURL);
-    ParseFeedResponse(AURL, Response, @MarkFeedItemsAsNotSeen, @SaveOrUpdateFeedItem, IsYouTubeFeed);
-
-    DebugLog('');
-    DebugLog('=== Data Refresh Complete ===');
-    DebugLog('Unread items: ' + IntToStr(GetUnreadCount(AURL)));
-  except
-    on E: Exception do
-    begin
-      DebugLog('Error refreshing feed data: ' + E.Message);
-      // In folder/all refresh, keep going even if one feed fails.
-      // Do not repaint the HTML panel or clear/reload the post list here.
-    end;
-  end;
-end;
-
-procedure TFormMain.ReloadSelectedFeedItemsAfterBatchRefresh;
-var
-  NodeData: TFeedNodeData;
-  IsYouTubeFeed: Boolean;
-begin
-  NodeData := GetSelectedNodeData;
-  if not Assigned(NodeData) or NodeData.IsFolder then
-    Exit;
-
-  IsYouTubeFeed := Pos('youtube.com', LowerCase(NodeData.FeedURL)) > 0;
-  LoadFeedItemsFromDb(NodeData.FeedURL, IsYouTubeFeed);
-end;
-
-procedure TFormMain.LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean);
-begin
-  FeedListUtils.LoadFeedItemsIntoList(FListView, FFeedItemsDb, FReadStatusDb, AURL, IsYouTubeFeed, @DebugLog);
-end;
-
-procedure TFormMain.MarkFeedItemsAsNotSeen(const AURL: string);
-begin
-  FeedDbUtils.MarkFeedItemsAsNotSeen(FFeedItemsDb, AURL);
-end;
-
-procedure TFormMain.SaveOrUpdateFeedItem(const AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink: string);
-begin
-  FeedDbUtils.SaveOrUpdateFeedItem(FFeedItemsDb, AFeedURL, AItemKey, ATitle, APubDate, AContent, ALink);
 end;
 
 function TFormMain.MakeItemKey(const AGuid, AId, ALink, ATitle, APubDate: string): string;
@@ -1886,6 +2040,7 @@ end;
 procedure TFormMain.InitializeDatabase;
 begin
   FeedDbUtils.InitializeDatabases(FReadStatusDb, FFeedItemsDb, TomarDataDir);
+  FFeedRecords := TFeedRecordIndex.Create(FFeedItemsDb);
 end;
 
 procedure TFormMain.DebugLog(const S: string);
@@ -1935,7 +2090,7 @@ end;
 
 function TFormMain.GetUnreadCount(const AFeedURL: string): Integer;
 begin
-  Result := FeedDbUtils.GetUnreadCount(FFeedItemsDb, FReadStatusDb, AFeedURL);
+  Result := FeedDbUtils.GetUnreadCount(FFeedItemsDb, FReadStatusDb, AFeedURL, FFeedRecords);
 end;
 
 procedure TFormMain.MenuMarkAllReadClick(Sender: TObject);
@@ -1943,6 +2098,7 @@ var
   NodeData: TFeedNodeData;
   MarkedCount: Integer;
 begin
+  if FRefreshing or FClosing then Exit;
   NodeData := GetSelectedNodeData;
   if not Assigned(NodeData) then
     Exit;
@@ -1950,6 +2106,7 @@ begin
   if NodeData.IsFolder then
   begin
     MarkedCount := FeedActionUtils.ProcessFeedsInSubtree(FTreeView.Selected, @MarkFeedReadAction);
+    FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
     if MarkedCount > 0 then
       ShowMessage('All items in folder marked as read.')
     else

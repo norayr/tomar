@@ -5,15 +5,13 @@ unit FeedTreeUtils;
 interface
 
 uses
-  Classes, SysUtils, ComCtrls, dbf, FeedModel;
+  Classes, SysUtils, ComCtrls, dbf, FeedModel, FeedDbUtils;
 
-procedure UpdateFeedNodeText(Node: TTreeNode; AFeedItemsDb, AReadStatusDb: TDbf);
+procedure UpdateFeedNodeText(Node: TTreeNode; AFeedItemsDb, AReadStatusDb: TDbf;
+  ARecordIndex: TFeedRecordIndex = nil);
 procedure UpdateAllFeedNodeTexts(ATreeView: TTreeView; AFeedItemsDb, AReadStatusDb: TDbf);
 
 implementation
-
-uses
-  FeedDbUtils;
 
 function StripUnreadCount(const AText: string): string;
 begin
@@ -22,7 +20,8 @@ begin
     Result := Copy(Result, 1, Pos(' (', Result) - 1);
 end;
 
-procedure UpdateFeedNodeText(Node: TTreeNode; AFeedItemsDb, AReadStatusDb: TDbf);
+procedure UpdateFeedNodeText(Node: TTreeNode; AFeedItemsDb, AReadStatusDb: TDbf;
+  ARecordIndex: TFeedRecordIndex);
 var
   NodeData: TFeedNodeData;
   UnreadCount: Integer;
@@ -35,7 +34,7 @@ begin
   if not Assigned(NodeData) or NodeData.IsFolder then
     Exit;
 
-  UnreadCount := FeedDbUtils.GetUnreadCount(AFeedItemsDb, AReadStatusDb, NodeData.FeedURL);
+  UnreadCount := FeedDbUtils.GetUnreadCount(AFeedItemsDb, AReadStatusDb, NodeData.FeedURL, ARecordIndex);
   BaseText := StripUnreadCount(Node.Text);
 
   if UnreadCount > 0 then

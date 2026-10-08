@@ -49,7 +49,7 @@ PARAMS =  $(PROJECT) -FU$(UNITDIR) -Xs -Xg -MObjFPC -Scgi -O1 -gl -vewnhi -l \
 
 # Default target to build the project
 all: $(OUTFILE)
-$(OUTFILE): $(PROJECT) MainForm.pas
+$(OUTFILE): $(PROJECT) $(wildcard *.pas) MainForm.lfm Makefile
 	mkdir -p $(UNITDIR)
 	$(FPC) $(PARAMS)
 
