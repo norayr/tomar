@@ -20,10 +20,8 @@ endif
 # print the detected architecture
 $(info ARCH is set to $(ARCH))
 
-# define the path to lazarus, this is where is it in case of chimaera
-#LAZARUS = "/usr/lib/lazarus/2.0.10"
-#LAZARUS = "/usr/lib/lazarus/2.2.6"
-LAZARUS ?= "/usr/lib/lazarus/4.0"
+# Gentoo installs Lazarus under /usr/share/lazarus.
+LAZARUS ?= /usr/share/lazarus
 
 # Define the PATH to include the necessary directories for fpc and fpcres
 CUSTOM_PATH = "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -41,10 +39,11 @@ UNITDIR := build/units
 
 # Define the compilation parameters
 PARAMS =  $(PROJECT) -FU$(UNITDIR) -Xs -Xg -MObjFPC -Scgi -O1 -gl -vewnhi -l \
-	-Fu$(LAZARUS)/components/lazutils \
+	-Fu$(LAZARUS)/components/lazutils/lib/$(ARCH) \
 	-Fu$(LAZARUS)/lcl/units/$(ARCH)/ \
 	-Fu$(LAZARUS)/lcl/units/$(ARCH)/$(X_TOOLKIT)/ \
 	-Fu$(LAZARUS)/packager/units/$(ARCH)/ \
+	-Fu$(LAZARUS)/components/turbopower_ipro/units/$(ARCH)/$(X_TOOLKIT)/ \
 	-Fu$(LAZARUS)/components/turbopower_ipro/ \
 	-Fu. -o$(OUTFILE) -dLCL -dLCL$(X_TOOLKIT)
 
@@ -68,4 +67,3 @@ install_hildon:
 
 	install -d $(DESTDIR)$(PREFIX)/share/pixmaps
 	install -m 0644 icon/receiver_48x48.png $(DESTDIR)$(PREFIX)/share/pixmaps/tomar.png
-

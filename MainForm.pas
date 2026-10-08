@@ -95,6 +95,8 @@ type
     procedure MenuAddFolderClick(Sender: TObject);
     procedure MenuAddFeedClick(Sender: TObject);
     procedure MenuDeleteClick(Sender: TObject);
+    procedure MenuMoveUpClick(Sender: TObject);
+    procedure MenuMoveToClick(Sender: TObject);
     procedure MenuRefreshClick(Sender: TObject);
     procedure MenuRefreshFeedsClick(Sender: TObject);
     procedure MenuRefreshAllClick(Sender: TObject);
@@ -398,6 +400,15 @@ begin
   MenuItem := TMenuItem.Create(FPopupMenu);
   MenuItem.Caption := 'Delete';
   MenuItem.OnClick := @MenuDeleteClick;
+  FPopupMenu.Items.Add(MenuItem);
+
+  MenuItem := TMenuItem.Create(FPopupMenu);
+  MenuItem.Caption := 'Move Up';
+  MenuItem.OnClick := @MenuMoveUpClick;
+  FPopupMenu.Items.Add(MenuItem);
+
+  MenuItem := TMenuItem.Create(FPopupMenu);
+  MenuItem.Caption := 'Move to';
   FPopupMenu.Items.Add(MenuItem);
 
   MenuItem := TMenuItem.Create(FPopupMenu);
@@ -755,6 +766,13 @@ end;
 procedure TFormMain.TreeViewMouseDown(Sender: TObject; Button: TMouseButton;
   Shift: TShiftState; X, Y: Integer);
 begin
+  if Button = mbRight then
+  begin
+    FLongPressTimer.Enabled := False;
+    FTreeView.Selected := FTreeView.GetNodeAt(X, Y);
+    Exit;
+  end;
+
   if Button = mbLeft then
   begin
     FLongPressPoint := Point(X, Y);
@@ -911,6 +929,10 @@ begin
     //FMpvProcess.Parameters.Add('--ytdl-raw-options=cookies-from-browser=firefox:/home/inky/.librewolf/vifu5p28.default-release::youtube');
     FMpvProcess.Parameters.Add('--cache=yes');
     FMpvProcess.Parameters.Add('--cache-secs=60');
+    FMpvProcess.Parameters.Add('--cache-pause=yes');
+    FMpvProcess.Parameters.Add('--cache-pause-initial=yes');
+    FMpvProcess.Parameters.Add('--cache-pause-wait=10');
+    FMpvProcess.Parameters.Add('--demuxer-max-bytes=512M');
     FMpvProcess.Parameters.Add(FCurrentVideoURL);
     FMpvProcess.Options := [];
 
@@ -929,9 +951,9 @@ end;
 
 procedure TFormMain.WatchButtonClick(Sender: TObject);
 begin
-  { Low-quality button: prefer old progressive MP4 format 18,
-    then H.264 360p, then any 360p, then whatever yt-dlp can provide. }
-  StartMpvWithFormat('18/best[height<=360][vcodec^=avc1]/best[height<=360]/best');
+  { Low quality button: progressive format 18, any format up to 360p, then
+    separate video and audio streams up to 360p. }
+  StartMpvWithFormat('18/b[height<=360]/(bv*[height<=360]+ba)');
 end;
 
 procedure TFormMain.WatchHDButtonClick(Sender: TObject);
@@ -1436,6 +1458,36 @@ end;
 procedure TFormMain.TreeViewPopup(Sender: TObject);
 var
   NodeData: TFeedNodeData;
+  Node: TTreeNode;
+  MoveMenu, Item: TMenuItem;
+
+  procedure AddDestination(const ACaption: string; ADestination: TTreeNode);
+  begin
+    Item := TMenuItem.Create(MoveMenu);
+    Item.Caption := ACaption;
+    if Assigned(ADestination) then
+      Item.Tag := PtrInt(ADestination)
+    else
+      Item.Tag := -1;
+    Item.OnClick := @MenuMoveToClick;
+    MoveMenu.Add(Item);
+  end;
+
+  procedure AddFolderDestinations(ANode: TTreeNode);
+  var
+    Data: TFeedNodeData;
+  begin
+    while Assigned(ANode) do
+    begin
+      Data := TFeedNodeData(ANode.Data);
+      if Assigned(Data) and Data.IsFolder and (ANode <> FTreeView.Selected) and
+         not FTreeView.Selected.HasAsParent(ANode) then
+        AddDestination(ANode.Text, ANode);
+      if ANode.HasChildren then
+        AddFolderDestinations(ANode.GetFirstChild);
+      ANode := ANode.GetNextSibling;
+    end;
+  end;
 begin
   // Enable/disable menu items based on selection
   NodeData := GetSelectedNodeData;
@@ -1451,6 +1503,53 @@ begin
 
   // Mark All Read (index 6) - available for both feeds and folders
   FPopupMenu.Items[6].Enabled := Assigned(NodeData);
+
+  Node := FTreeView.Selected;
+  FPopupMenu.Items[8].Enabled := Assigned(Node) and Assigned(Node.Parent);
+  MoveMenu := FPopupMenu.Items[9];
+  MoveMenu.Clear;
+  if Assigned(Node) then
+  begin
+    AddDestination('Top level', nil);
+    AddFolderDestinations(FTreeView.Items.GetFirstNode);
+    MoveMenu.Enabled := MoveMenu.Count > 0;
+  end
+  else
+    MoveMenu.Enabled := False;
+end;
+
+procedure TFormMain.MenuMoveUpClick(Sender: TObject);
+var
+  Node, NewParent: TTreeNode;
+begin
+  Node := FTreeView.Selected;
+  if not Assigned(Node) or not Assigned(Node.Parent) then Exit;
+  NewParent := Node.Parent.Parent;
+  Node.MoveTo(NewParent, naAddChild);
+  FTreeView.Selected := Node;
+  SaveFeedList;
+end;
+
+procedure TFormMain.MenuMoveToClick(Sender: TObject);
+var
+  Node, Destination: TTreeNode;
+  DestinationTag: PtrInt;
+begin
+  Node := FTreeView.Selected;
+  if not Assigned(Node) or not (Sender is TMenuItem) then Exit;
+  DestinationTag := TMenuItem(Sender).Tag;
+  if DestinationTag = -1 then
+    Destination := nil
+  else
+    Destination := TTreeNode(Pointer(DestinationTag));
+  if (Destination = Node) or (Assigned(Destination) and Destination.HasAsParent(Node)) then
+    Exit;
+  if Assigned(Destination) then
+    Node.MoveTo(Destination, naAddChild)
+  else
+    Node.MoveTo(nil, naAdd);
+  FTreeView.Selected := Node;
+  SaveFeedList;
 end;
 
 procedure TFormMain.MenuAddFolderClick(Sender: TObject);
