@@ -28,6 +28,8 @@ type
     FListView: TListView;
     FHtmlPanel: TIpHtmlPanel;
     FHtmlPopup: TPopupMenu;
+    FOpenOriginalButton: TButton;
+    FOriginalURL: string;
     FWatchPanel: TPanel;
     FWatchButton: TButton;
     FWatchHDButton: TButton;
@@ -98,6 +100,8 @@ type
     procedure HtmlPanelContextPopup(Sender: TObject; MousePos: TPoint;
        var Handled: Boolean);
     procedure MenuCopyLinkClick(Sender: TObject);
+    procedure ShowOriginalLink(const AURL: string);
+    procedure OpenOriginalButtonClick(Sender: TObject);
     procedure WatchButtonClick(Sender: TObject);
     procedure WatchHDButtonClick(Sender: TObject);
     procedure InstallYtDlpButtonClick(Sender: TObject);
@@ -243,6 +247,7 @@ begin
   FClosing := False;
   FRefreshErrors := TStringList.Create;
   FCurrentVideoURL := '';
+  FOriginalURL := '';
   FYoutubePlayerAvailable := CanWatchYouTubeLocally;
 
 {$IFDEF RSSREADER_DEBUG}
@@ -543,6 +548,16 @@ begin
   FBottomPanel.Caption := '';
   FBottomPanel.BevelOuter := bvNone;
   FBottomPanel.Constraints.MinHeight := 90;
+
+  FOpenOriginalButton := TButton.Create(Self);
+  FOpenOriginalButton.Parent := FBottomPanel;
+  FOpenOriginalButton.Align := alTop;
+  FOpenOriginalButton.Height := 36;
+  FOpenOriginalButton.Caption := 'Open original';
+  FOpenOriginalButton.Hint := 'Open the article on its website';
+  FOpenOriginalButton.ShowHint := True;
+  FOpenOriginalButton.Visible := False;
+  FOpenOriginalButton.OnClick := @OpenOriginalButtonClick;
 
   FWatchPanel := TPanel.Create(Self);
   FWatchPanel.Parent := FBottomPanel;
@@ -927,6 +942,22 @@ begin
     Clipboard.AsText := FCurrentURL;
 end;
 
+procedure TFormMain.ShowOriginalLink(const AURL: string);
+begin
+  FOriginalURL := Trim(AURL);
+  if (Pos('http://', LowerCase(FOriginalURL)) <> 1) and
+     (Pos('https://', LowerCase(FOriginalURL)) <> 1) then
+    FOriginalURL := '';
+  if Assigned(FOpenOriginalButton) then
+    FOpenOriginalButton.Visible := FOriginalURL <> '';
+end;
+
+procedure TFormMain.OpenOriginalButtonClick(Sender: TObject);
+begin
+  if FOriginalURL <> '' then
+    LCLIntf.OpenURL(FOriginalURL);
+end;
+
 procedure TFormMain.SetWatchButtonsEnabled(AEnabled: Boolean);
 begin
   if Assigned(FWatchButton) then
@@ -1227,6 +1258,10 @@ begin
     if Item.SubItems.Count > 1 then
     begin
       Content := Item.SubItems[1];
+      if Item.SubItems.Count > 2 then
+        ShowOriginalLink(Item.SubItems[2])
+      else
+        ShowOriginalLink('');
 
       // Determine current feed URL (needed for YouTube special-casing)
       NodeData := GetSelectedNodeData;
@@ -1314,6 +1349,7 @@ var
   NodeData: TFeedNodeData;
   IsYouTubeFeed: Boolean;
 begin
+  ShowOriginalLink('');
   if FTreeView.Selected = nil then
     Exit;
 
@@ -1382,6 +1418,10 @@ begin
     if Item.SubItems.Count > 1 then
     begin
       Content := Item.SubItems[1];
+      if Item.SubItems.Count > 2 then
+        ShowOriginalLink(Item.SubItems[2])
+      else
+        ShowOriginalLink('');
 
       // Determine current feed URL (needed for YouTube special-casing)
       NodeData := GetSelectedNodeData;
