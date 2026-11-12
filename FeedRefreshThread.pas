@@ -126,6 +126,7 @@ begin
               // This client and parser belong exclusively to the worker.
               Client := TFPHTTPClient.Create(nil);
               Client.AllowRedirect := True;
+              Client.AddHeader('User-Agent', 'Mozilla/5.0');
               Client.ConnectTimeout := 10000;
               Client.IOTimeout := 15000;
               Client.OnDataReceived := @DownloadProgress;
