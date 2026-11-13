@@ -85,6 +85,8 @@ type
     procedure ListViewCustomDrawItem(Sender: TCustomListView; Item: TListItem;
       State: TCustomDrawState; var DefaultDraw: Boolean);
     procedure TreeViewPopup(Sender: TObject);
+    procedure TreeViewContextPopup(Sender: TObject; MousePos: TPoint;
+      var Handled: Boolean);
 
     // TreeView events
     procedure TreeViewMouseDown(Sender: TObject; Button: TMouseButton;
@@ -401,6 +403,7 @@ begin
   FTreeView.Align := alClient;
   FTreeView.ReadOnly := True;
   FTreeView.OnSelectionChanged := @TreeViewSelectionChanged;
+  FTreeView.OnContextPopup := @TreeViewContextPopup;
   FTreeView.PopupMenu := TPopupMenu.Create(Self);
 
   // For long press as right click
@@ -918,12 +921,18 @@ end;
 procedure TFormMain.LongPressTimerTick(Sender: TObject);
 var
   ScreenPoint: TPoint;
+  Node: TTreeNode;
 begin
   FLongPressTimer.Enabled := False;
 
   // Only handle TreeView long press
   if FLongPressControl = FTreeView then
   begin
+    // The same context-menu restriction applies to touch long presses.
+    Node := FTreeView.GetNodeAt(FLongPressPoint.X, FLongPressPoint.Y);
+    if Assigned(Node) and Assigned(Node.Data) and
+       (TFeedNodeData(Node.Data).CollectionKind <> 0) then
+      Exit;
     ScreenPoint := FTreeView.ClientToScreen(FLongPressPoint);
     if Assigned(FPopupMenu) then
       FPopupMenu.PopUp(ScreenPoint.X, ScreenPoint.Y);
@@ -1584,6 +1593,23 @@ begin
   DefaultDraw := True;
 end;
 
+procedure TFormMain.TreeViewContextPopup(Sender: TObject; MousePos: TPoint;
+  var Handled: Boolean);
+var
+  Node: TTreeNode;
+begin
+  // Suppress the menu for Watched and Favorites. Use the clicked node
+  // rather than the previously selected one (important on mouse right-click).
+  if (MousePos.X >= 0) and (MousePos.Y >= 0) then
+    Node := FTreeView.GetNodeAt(MousePos.X, MousePos.Y)
+  else
+    Node := FTreeView.Selected; // keyboard menu key
+
+  if Assigned(Node) and Assigned(Node.Data) and
+     (TFeedNodeData(Node.Data).CollectionKind <> 0) then
+    Handled := True;
+end;
+
 procedure TFormMain.TreeViewPopup(Sender: TObject);
 var
   Node: TTreeNode;
@@ -2074,12 +2100,12 @@ begin
   Data := TFeedNodeData.Create;
   Data.IsFolder := True;
   Data.CollectionKind := COLLECTION_WATCHED;
-  FTreeView.Items.AddObject(nil, 'Watched', Data);
+  FTreeView.Items.AddObject(nil, '👀 watched', Data);
 
   Data := TFeedNodeData.Create;
   Data.IsFolder := True;
   Data.CollectionKind := COLLECTION_FAVORITES;
-  FTreeView.Items.AddObject(nil, 'Favorites', Data);
+  FTreeView.Items.AddObject(nil, '⭐ favorites', Data);
 end;
 
 function TFormMain.GetItemFeedURL(AItem: TListItem): string;
