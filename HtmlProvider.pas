@@ -29,6 +29,8 @@ type
 
 implementation
 
+uses LCLIntf;
+
 { TCustomHtmlDataProvider }
 
 constructor TCustomHtmlDataProvider.Create(AOwner: TComponent);
@@ -63,7 +65,10 @@ end;
 
 procedure TCustomHtmlDataProvider.DoReference(const URL: string);
 begin
-  // Nothing to do
+  // TIpHtmlPanel calls this when a hyperlink is activated.
+  if (Pos('https://', LowerCase(URL)) = 1) or
+     (Pos('http://', LowerCase(URL)) = 1) then
+    LCLIntf.OpenURL(URL);
 end;
 
 procedure TCustomHtmlDataProvider.DoGetImage(Sender: TIpHtmlNode;

@@ -28,8 +28,6 @@ type
     FListView: TListView;
     FHtmlPanel: TIpHtmlPanel;
     FHtmlPopup: TPopupMenu;
-    FOpenOriginalButton: TButton;
-    FOriginalURL: string;
     FWatchPanel: TPanel;
     FWatchButton: TButton;
     FWatchHDButton: TButton;
@@ -100,8 +98,6 @@ type
     procedure HtmlPanelContextPopup(Sender: TObject; MousePos: TPoint;
        var Handled: Boolean);
     procedure MenuCopyLinkClick(Sender: TObject);
-    procedure ShowOriginalLink(const AURL: string);
-    procedure OpenOriginalButtonClick(Sender: TObject);
     procedure WatchButtonClick(Sender: TObject);
     procedure WatchHDButtonClick(Sender: TObject);
     procedure InstallYtDlpButtonClick(Sender: TObject);
@@ -247,7 +243,6 @@ begin
   FClosing := False;
   FRefreshErrors := TStringList.Create;
   FCurrentVideoURL := '';
-  FOriginalURL := '';
   FYoutubePlayerAvailable := CanWatchYouTubeLocally;
 
 {$IFDEF RSSREADER_DEBUG}
@@ -548,16 +543,6 @@ begin
   FBottomPanel.Caption := '';
   FBottomPanel.BevelOuter := bvNone;
   FBottomPanel.Constraints.MinHeight := 90;
-
-  FOpenOriginalButton := TButton.Create(Self);
-  FOpenOriginalButton.Parent := FBottomPanel;
-  FOpenOriginalButton.Align := alTop;
-  FOpenOriginalButton.Height := 36;
-  FOpenOriginalButton.Caption := 'Open original';
-  FOpenOriginalButton.Hint := 'Open the article on its website';
-  FOpenOriginalButton.ShowHint := True;
-  FOpenOriginalButton.Visible := False;
-  FOpenOriginalButton.OnClick := @OpenOriginalButtonClick;
 
   FWatchPanel := TPanel.Create(Self);
   FWatchPanel.Parent := FBottomPanel;
@@ -942,20 +927,36 @@ begin
     Clipboard.AsText := FCurrentURL;
 end;
 
-procedure TFormMain.ShowOriginalLink(const AURL: string);
+function EscapeHtmlLink(const S: string): string;
 begin
-  FOriginalURL := Trim(AURL);
-  if (Pos('http://', LowerCase(FOriginalURL)) <> 1) and
-     (Pos('https://', LowerCase(FOriginalURL)) <> 1) then
-    FOriginalURL := '';
-  if Assigned(FOpenOriginalButton) then
-    FOpenOriginalButton.Visible := FOriginalURL <> '';
+  Result := StringReplace(S, '&', '&amp;', [rfReplaceAll]);
+  Result := StringReplace(Result, '"', '&quot;', [rfReplaceAll]);
+  Result := StringReplace(Result, '<', '&lt;', [rfReplaceAll]);
+  Result := StringReplace(Result, '>', '&gt;', [rfReplaceAll]);
 end;
 
-procedure TFormMain.OpenOriginalButtonClick(Sender: TObject);
+{ Append the item's RSS/Atom link after its HTML content.  For complete
+  HTML documents insert before </body>, not after </html>. }
+function ArticleWithOriginalLink(const AHtml, AUrl: string): string;
+var
+  URL, LinkHtml: string;
+  InsertAt: SizeInt;
 begin
-  if FOriginalURL <> '' then
-    LCLIntf.OpenURL(FOriginalURL);
+  Result := AHtml;
+  URL := Trim(AUrl);
+  if (Pos('https://', LowerCase(URL)) <> 1) and
+     (Pos('http://', LowerCase(URL)) <> 1) then
+    Exit;
+
+  LinkHtml := '<p><a href="' + EscapeHtmlLink(URL) + '">' +
+              EscapeHtmlLink(URL) + '</a></p>';
+  InsertAt := Pos('</body>', LowerCase(Result));
+  if InsertAt = 0 then
+    InsertAt := Pos('</html>', LowerCase(Result));
+  if InsertAt <> 0 then
+    Insert(LinkHtml, Result, InsertAt)
+  else
+    Result := Result + LinkHtml;
 end;
 
 procedure TFormMain.SetWatchButtonsEnabled(AEnabled: Boolean);
@@ -1259,9 +1260,9 @@ begin
     begin
       Content := Item.SubItems[1];
       if Item.SubItems.Count > 2 then
-        ShowOriginalLink(Item.SubItems[2])
+        ItemLink := Item.SubItems[2]
       else
-        ShowOriginalLink('');
+        ItemLink := '';
 
       // Determine current feed URL (needed for YouTube special-casing)
       NodeData := GetSelectedNodeData;
@@ -1313,14 +1314,13 @@ begin
                        '<p><img src="https://i.ytimg.com/vi/' + VideoId + '/hqdefault.jpg" ' +
                        'style="max-width:100%;height:auto;border:1px solid #ccc;" ' +
                        'alt="Video thumbnail"></p>' +
-                       '<p><a href="' + Content + '" target="_blank">' + Content + '</a></p>' +
                        //'<p><iframe width="640" height="360" ' +
                        //'src="https://www.youtube.com/embed/' + VideoId + '" ' +
                        //'frameborder="0" allowfullscreen></iframe></p>' +
                        '</body></html>';
         SetWatchButtonURL(Content);
         try
-          FHtmlPanel.SetHTMLFromStr(HtmlContent);
+          FHtmlPanel.SetHTMLFromStr(ArticleWithOriginalLink(HtmlContent, ItemLink));
         except
           on E: Exception do
             ShowMessage('Error displaying HTML: ' + E.Message);
@@ -1331,7 +1331,7 @@ begin
         // Regular RSS feed content
         SetWatchButtonURL('');
         try
-          FHtmlPanel.SetHTMLFromStr(Content);
+          FHtmlPanel.SetHTMLFromStr(ArticleWithOriginalLink(Content, ItemLink));
         except
           on E: Exception do
             ShowMessage('Error displaying HTML: ' + E.Message);
@@ -1349,7 +1349,6 @@ var
   NodeData: TFeedNodeData;
   IsYouTubeFeed: Boolean;
 begin
-  ShowOriginalLink('');
   if FTreeView.Selected = nil then
     Exit;
 
@@ -1419,9 +1418,9 @@ begin
     begin
       Content := Item.SubItems[1];
       if Item.SubItems.Count > 2 then
-        ShowOriginalLink(Item.SubItems[2])
+        ItemLink := Item.SubItems[2]
       else
-        ShowOriginalLink('');
+        ItemLink := '';
 
       // Determine current feed URL (needed for YouTube special-casing)
       NodeData := GetSelectedNodeData;
@@ -1471,13 +1470,12 @@ begin
         // Create HTML with embedded YouTube video
         HtmlContent := '<html><body style="margin:0;padding:20px;font-family:sans-serif;">' +
                        '<h3>' + Item.Caption + '</h3>' +
-                       '<p><a href="' + Content + '" target="_blank">' + Content + '</a></p>' +
                        '<p><iframe width="640" height="360" ' +
                        'src="https://www.youtube.com/embed/' + VideoId + '" ' +
                        'frameborder="0" allowfullscreen></iframe></p>' +
                        '</body></html>';
         try
-          FHtmlPanel.SetHTMLFromStr(HtmlContent);
+          FHtmlPanel.SetHTMLFromStr(ArticleWithOriginalLink(HtmlContent, ItemLink));
         except
           on E: Exception do
             ShowMessage('Error displaying HTML: ' + E.Message);
@@ -1487,7 +1485,7 @@ begin
       begin
         // Regular RSS feed content
         try
-          FHtmlPanel.SetHTMLFromStr(Content);
+          FHtmlPanel.SetHTMLFromStr(ArticleWithOriginalLink(Content, ItemLink));
         except
           on E: Exception do
             ShowMessage('Error displaying HTML: ' + E.Message);
