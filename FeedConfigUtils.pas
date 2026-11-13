@@ -111,6 +111,13 @@ var
   begin
     while Assigned(TreeNode) do
     begin
+      // Virtual collections are views, not entries in feeds.xml.
+      NodeData := TFeedNodeData(TreeNode.Data);
+      if Assigned(NodeData) and (NodeData.CollectionKind <> 0) then
+      begin
+        TreeNode := TreeNode.GetNextSibling;
+        Continue;
+      end;
       ItemNode := Doc.CreateElement('item');
       ParentXMLNode.AppendChild(ItemNode);
 

@@ -38,7 +38,7 @@ begin
         ChildNode := ChildNode.GetNextSibling;
       end;
     end
-    else
+    else if NodeData.CollectionKind = 0 then
     begin
       if Assigned(AAction) then
         AAction(NodeData.FeedURL);
@@ -68,7 +68,7 @@ begin
     if Assigned(Node) and Assigned(Node.Data) then
     begin
       NodeData := TFeedNodeData(Node.Data);
-      if not NodeData.IsFolder then
+      if not NodeData.IsFolder and (NodeData.CollectionKind = 0) then
       begin
         if Assigned(AAction) then
           AAction(NodeData.FeedURL);

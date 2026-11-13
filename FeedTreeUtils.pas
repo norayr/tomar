@@ -31,7 +31,8 @@ begin
     Exit;
 
   NodeData := TFeedNodeData(Node.Data);
-  if not Assigned(NodeData) or NodeData.IsFolder then
+  if not Assigned(NodeData) or NodeData.IsFolder or
+     (NodeData.CollectionKind <> 0) then
     Exit;
 
   UnreadCount := FeedDbUtils.GetUnreadCount(AFeedItemsDb, AReadStatusDb, NodeData.FeedURL, ARecordIndex);
@@ -91,7 +92,8 @@ begin
         if Assigned(Node) and Assigned(Node.Data) then
         begin
           NodeData := TFeedNodeData(Node.Data);
-          if Assigned(NodeData) and (not NodeData.IsFolder) then
+          if Assigned(NodeData) and (not NodeData.IsFolder) and
+             (NodeData.CollectionKind = 0) then
           begin
             BaseText := StripUnreadCount(Node.Text);
             UnreadCount := FeedDbUtils.GetCountValue(Counts, NodeData.FeedURL);

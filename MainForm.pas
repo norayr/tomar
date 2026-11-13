@@ -10,7 +10,7 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
   ExtCtrls, Menus, Process, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
-  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils, FeedListUtils, FeedRefreshThread, FeedDbUtils
+  FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils, FeedListUtils, FeedRefreshThread, FeedDbUtils, ArticleCollections
   {$IFDEF LCLGTK2}
   , x, Gtk2, Gdk2, Gdk2x, xatom
   {$ENDIF};
@@ -31,6 +31,8 @@ type
     FWatchPanel: TPanel;
     FWatchButton: TButton;
     FWatchHDButton: TButton;
+    FFavoriteButton: TButton;
+    FCollections: TArticleCollections;
     FInstallYtDlpButton: TButton;
     FMpvProcess: TProcess;
     FMpvTimer: TTimer;
@@ -98,6 +100,7 @@ type
     procedure HtmlPanelContextPopup(Sender: TObject; MousePos: TPoint;
        var Handled: Boolean);
     procedure MenuCopyLinkClick(Sender: TObject);
+    procedure FavoriteButtonClick(Sender: TObject);
     procedure WatchButtonClick(Sender: TObject);
     procedure WatchHDButtonClick(Sender: TObject);
     procedure InstallYtDlpButtonClick(Sender: TObject);
@@ -123,6 +126,13 @@ type
 
     procedure LoadFeedList;
     procedure SaveFeedList;
+    procedure AddCollectionNodes;
+    procedure LoadCollection(AKind: Integer);
+    function GetItemFeedURL(AItem: TListItem): string;
+    function SelectedArticle: TStoredArticle;
+    procedure UpdateFavoriteButton;
+    procedure RecordSelectedAsWatched;
+    procedure RefreshActiveCollection(AKind: Integer);
     procedure LoadFeedItemsFromDb(const AURL: string; IsYouTubeFeed: Boolean;
       APreserveSelection: Boolean = False);
     function MakeItemKey(const AGuid, AId, ALink, ATitle, APubDate: string): string;
@@ -242,6 +252,7 @@ begin
   FRefreshing := False;
   FClosing := False;
   FRefreshErrors := TStringList.Create;
+  FCollections := TArticleCollections.Create(TomarDataDir);
   FCurrentVideoURL := '';
   FYoutubePlayerAvailable := CanWatchYouTubeLocally;
 
@@ -263,6 +274,7 @@ begin
   //CleanupOrphanedReadStatus(CONFIG_FILE, FReadStatusDb);
   // end of test cleanup
   CreateControls;
+  AddCollectionNodes;
   LoadFeedList;
   FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb);
 end;
@@ -280,6 +292,7 @@ begin
   FreeAndNil(FApplyKeys);
   FreeAndNil(FFeedRecords);
   FreeAndNil(FRefreshErrors);
+  FreeAndNil(FCollections);
 
   // Free all node data
   if Assigned(FTreeView) then
@@ -571,6 +584,17 @@ begin
   FWatchHDButton.Hint := 'Watch, better quality / up to 720p';
   FWatchHDButton.ShowHint := True;
   FWatchHDButton.OnClick := @WatchHDButtonClick;
+
+  // A single compact favorite control for videos and ordinary RSS items.
+  FFavoriteButton := TButton.Create(Self);
+  FFavoriteButton.Parent := FWatchPanel;
+  FFavoriteButton.Align := alLeft;
+  FFavoriteButton.Width := 48;
+  FFavoriteButton.Caption := '☆';
+  FFavoriteButton.Hint := 'Add article to Favorites';
+  FFavoriteButton.ShowHint := True;
+  FFavoriteButton.Enabled := False;
+  FFavoriteButton.OnClick := @FavoriteButtonClick;
 
   FInstallYtDlpButton := TButton.Create(Self);
   FInstallYtDlpButton.Parent := FWatchPanel;
@@ -1006,6 +1030,13 @@ begin
 
     SetWatchButtonsEnabled(False);
     FMpvProcess.Execute;
+    // A launch is a watch event; don't record failed attempts.
+    try
+      RecordSelectedAsWatched;
+    except
+      on E: Exception do
+        ShowMessage('mpv started, but Watched could not be saved: ' + E.Message);
+    end;
     FMpvTimer.Enabled := True;
   except
     on E: Exception do
@@ -1191,9 +1222,14 @@ begin
   FCurrentVideoURL := AURL;
   FYoutubePlayerAvailable := CanWatchYouTubeLocally;
 
-  if Assigned(FWatchPanel) then
-    FWatchPanel.Visible := FYoutubePlayerAvailable and (FCurrentVideoURL <> '');
+  if Assigned(FWatchButton) then
+    FWatchButton.Visible := FYoutubePlayerAvailable and (FCurrentVideoURL <> '');
+  if Assigned(FWatchHDButton) then
+    FWatchHDButton.Visible := FYoutubePlayerAvailable and (FCurrentVideoURL <> '');
+  if Assigned(FInstallYtDlpButton) then
+    FInstallYtDlpButton.Visible := FCurrentVideoURL <> '';
 
+  UpdateFavoriteButton;
   SetWatchButtonsEnabled(not (Assigned(FMpvProcess) and FMpvProcess.Running));
 end;
 
@@ -1234,9 +1270,10 @@ begin
       begin
         // Mark item as read
         NodeData := GetSelectedNodeData;
-        if Assigned(NodeData) and not NodeData.IsFolder then
+        if Assigned(NodeData) and
+           ((not NodeData.IsFolder) or (NodeData.CollectionKind <> 0)) then
         begin
-          FeedURL := NodeData.FeedURL;
+          FeedURL := GetItemFeedURL(Item);
           if Item.SubItems.Count > 2 then
           begin
             ItemLink := Item.SubItems[2]; // The link is in SubItems[2]
@@ -1246,10 +1283,13 @@ begin
               ItemKey := ItemLink;
             MarkItemAsRead(FeedURL, ItemKey, ItemLink);
             Item.Data := nil; // Mark as read in ListView
-              FListView.Invalidate;
-              FListView.Update;
+            FListView.Invalidate;
+            FListView.Update;
             // Update tree node text
-            FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb, FFeedRecords);
+            if Assigned(NodeData) and (NodeData.CollectionKind <> 0) then
+              FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb)
+            else
+              FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb, FFeedRecords);
           end;
         end;
       end;
@@ -1266,10 +1306,7 @@ begin
 
       // Determine current feed URL (needed for YouTube special-casing)
       NodeData := GetSelectedNodeData;
-      if Assigned(NodeData) and not NodeData.IsFolder then
-        FeedURL := NodeData.FeedURL
-      else
-        FeedURL := '';
+      FeedURL := GetItemFeedURL(Item);
 
 
       // Check if this is a YouTube URL in a YouTube feed (avoid special-casing blog posts that just mention YouTube)
@@ -1352,8 +1389,17 @@ begin
   if FTreeView.Selected = nil then
     Exit;
 
+  SetWatchButtonURL('');
   NodeData := GetSelectedNodeData;
-  if Assigned(NodeData) and not NodeData.IsFolder then
+  if Assigned(NodeData) and (NodeData.CollectionKind <> 0) then
+  begin
+    LoadCollection(NodeData.CollectionKind);
+    if FListView.Items.Count = 0 then
+      FHtmlPanel.SetHTMLFromStr('<html><body><p>No articles in this collection yet.</p></body></html>')
+    else
+      FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an article to view it.</p></body></html>');
+  end
+  else if Assigned(NodeData) and not NodeData.IsFolder then
   begin
     IsYouTubeFeed := IsYouTubeFeedURL(NodeData.FeedURL);
     LoadFeedItemsFromDb(NodeData.FeedURL, IsYouTubeFeed);
@@ -1362,7 +1408,13 @@ begin
       FHtmlPanel.SetHTMLFromStr('<html><body><p>No cached items for this feed yet.</p></body></html>')
     else
       FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an item to view its content.</p></body></html>');
+  end
+  else
+  begin
+    FListView.Items.Clear;
+    FHtmlPanel.SetHTMLFromStr('<html><body><p>Select a feed.</p></body></html>');
   end;
+  UpdateFavoriteButton;
 end;
 
 procedure TFormMain.ListViewSelectItem(Sender: TObject; Item: TListItem;
@@ -1397,9 +1449,10 @@ begin
       begin
         // Mark item as read
         NodeData := GetSelectedNodeData;
-        if Assigned(NodeData) and not NodeData.IsFolder then
+        if Assigned(NodeData) and
+           ((not NodeData.IsFolder) or (NodeData.CollectionKind <> 0)) then
         begin
-          FeedURL := NodeData.FeedURL;
+          FeedURL := GetItemFeedURL(Item);
           if Item.SubItems.Count > 2 then
           begin
             ItemLink := Item.SubItems[2]; // The link is in SubItems[2]
@@ -1424,10 +1477,7 @@ begin
 
       // Determine current feed URL (needed for YouTube special-casing)
       NodeData := GetSelectedNodeData;
-      if Assigned(NodeData) and not NodeData.IsFolder then
-        FeedURL := NodeData.FeedURL
-      else
-        FeedURL := '';
+      FeedURL := GetItemFeedURL(Item);
 
 
       // Check if this is a YouTube feed AND contains a YouTube URL
@@ -1468,6 +1518,7 @@ begin
         end;
 
         // Create HTML with embedded YouTube video
+        SetWatchButtonURL(Content);
         HtmlContent := '<html><body style="margin:0;padding:20px;font-family:sans-serif;">' +
                        '<h3>' + Item.Caption + '</h3>' +
                        '<p><iframe width="640" height="360" ' +
@@ -1484,6 +1535,7 @@ begin
       else
       begin
         // Regular RSS feed content
+        SetWatchButtonURL('');
         try
           FHtmlPanel.SetHTMLFromStr(ArticleWithOriginalLink(Content, ItemLink));
         except
@@ -1499,7 +1551,10 @@ begin
       MarkItemAsRead(FeedURL, ItemKey, ItemLink);
       Item.Data := nil; // Mark as read in ListView
       // Update tree node text
-      FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb, FFeedRecords);
+      if Assigned(NodeData) and (NodeData.CollectionKind <> 0) then
+        FeedTreeUtils.UpdateAllFeedNodeTexts(FTreeView, FFeedItemsDb, FReadStatusDb)
+      else
+        FeedTreeUtils.UpdateFeedNodeText(FTreeView.Selected, FFeedItemsDb, FReadStatusDb, FFeedRecords);
     end;
 
   finally
@@ -1553,7 +1608,8 @@ var
     while Assigned(ANode) do
     begin
       Data := TFeedNodeData(ANode.Data);
-      if Assigned(Data) and Data.IsFolder and (ANode <> FTreeView.Selected) and
+      if Assigned(Data) and Data.IsFolder and (Data.CollectionKind = 0) and
+         (ANode <> FTreeView.Selected) and
          not FTreeView.Selected.HasAsParent(ANode) then
         AddDestination(ANode.Text, ANode);
       if ANode.HasChildren then
@@ -1566,7 +1622,8 @@ begin
   Node := FTreeView.Selected;
   MoveMenu := FPopupMenu.Items[9];
   MoveMenu.Clear;
-  if Assigned(Node) and not FRefreshing then
+  if Assigned(Node) and not FRefreshing and Assigned(Node.Data) and
+     (TFeedNodeData(Node.Data).CollectionKind = 0) then
   begin
     AddDestination('Top level', nil);
     AddFolderDestinations(FTreeView.Items.GetFirstNode);
@@ -1583,6 +1640,7 @@ begin
   if FRefreshing or FClosing then Exit;
   Node := FTreeView.Selected;
   if not Assigned(Node) or not Assigned(Node.Parent) then Exit;
+  if Assigned(Node.Data) and (TFeedNodeData(Node.Data).CollectionKind <> 0) then Exit;
   NewParent := Node.Parent.Parent;
   if Assigned(NewParent) then
     Node.MoveTo(NewParent, naAddChild)
@@ -1600,6 +1658,7 @@ begin
   if FRefreshing or FClosing then Exit;
   Node := FTreeView.Selected;
   if not Assigned(Node) or not (Sender is TMenuItem) then Exit;
+  if Assigned(Node.Data) and (TFeedNodeData(Node.Data).CollectionKind <> 0) then Exit;
   DestinationTag := TMenuItem(Sender).Tag;
   if DestinationTag = -1 then
     Destination := nil
@@ -1629,7 +1688,9 @@ begin
   NodeData.IsFolder := True;
   NodeData.FeedURL := '';
 
-  if FTreeView.Selected = nil then
+  if (FTreeView.Selected = nil) or
+     (Assigned(FTreeView.Selected.Data) and
+      (TFeedNodeData(FTreeView.Selected.Data).CollectionKind <> 0)) then
     FTreeView.Items.AddObject(nil, FolderName, NodeData)
   else
     FTreeView.Items.AddChildObject(FTreeView.Selected, FolderName, NodeData);
@@ -1659,6 +1720,9 @@ begin
   NodeData.FeedURL := FeedURL;
 
   ParentNode := FTreeView.Selected;
+  if Assigned(ParentNode) and Assigned(ParentNode.Data) and
+     (TFeedNodeData(ParentNode.Data).CollectionKind <> 0) then
+    ParentNode := nil;
 
   // If selected node is a feed (not folder), add to its parent
   if Assigned(ParentNode) then
@@ -1684,6 +1748,8 @@ begin
   if FRefreshing or FClosing then Exit;
   Node := FTreeView.Selected;
   if Node = nil then
+    Exit;
+  if Assigned(Node.Data) and (TFeedNodeData(Node.Data).CollectionKind <> 0) then
     Exit;
 
   if MessageDlg('Delete', 'Delete "' + Node.Text + '"?',
@@ -1735,13 +1801,19 @@ begin
   NodeData := GetSelectedNodeData;
   FPopupMenu.Items[0].Enabled := CanChange;
   FPopupMenu.Items[1].Enabled := CanChange;
-  FPopupMenu.Items[3].Enabled := CanChange and Assigned(NodeData) and not NodeData.IsFolder;
-  FPopupMenu.Items[4].Enabled := CanChange and Assigned(NodeData) and NodeData.IsFolder;
+  FPopupMenu.Items[3].Enabled := CanChange and Assigned(NodeData) and
+    (NodeData.CollectionKind = 0) and not NodeData.IsFolder;
+  FPopupMenu.Items[4].Enabled := CanChange and Assigned(NodeData) and
+    (NodeData.CollectionKind = 0) and NodeData.IsFolder;
   FPopupMenu.Items[5].Enabled := CanChange;
-  FPopupMenu.Items[6].Enabled := CanChange and Assigned(NodeData);
-  FPopupMenu.Items[7].Enabled := CanChange and Assigned(Node);
-  FPopupMenu.Items[8].Enabled := CanChange and Assigned(Node) and Assigned(Node.Parent);
-  FPopupMenu.Items[9].Enabled := CanChange and Assigned(Node);
+  FPopupMenu.Items[6].Enabled := CanChange and Assigned(NodeData) and
+    (NodeData.CollectionKind = 0);
+  FPopupMenu.Items[7].Enabled := CanChange and Assigned(NodeData) and
+    (NodeData.CollectionKind = 0);
+  FPopupMenu.Items[8].Enabled := CanChange and Assigned(Node) and
+    Assigned(Node.Parent) and Assigned(NodeData) and (NodeData.CollectionKind = 0);
+  FPopupMenu.Items[9].Enabled := CanChange and Assigned(NodeData) and
+    (NodeData.CollectionKind = 0);
 end;
 
 procedure TFormMain.StartFeedRefresh(ARootNode: TTreeNode);
@@ -1762,7 +1834,8 @@ begin
          not Node.HasAsParent(ARootNode) then
         Continue;
       NodeData := TFeedNodeData(Node.Data);
-      if Assigned(NodeData) and not NodeData.IsFolder then
+      if Assigned(NodeData) and not NodeData.IsFolder and
+         (NodeData.CollectionKind = 0) then
         URLs.Add(NodeData.FeedURL);
     end;
     if URLs.Count = 0 then
@@ -1981,7 +2054,8 @@ var
 begin
   if FRefreshing or FClosing then Exit;
   NodeData := GetSelectedNodeData;
-  if not Assigned(NodeData) or not NodeData.IsFolder then
+  if not Assigned(NodeData) or not NodeData.IsFolder or
+     (NodeData.CollectionKind <> 0) then
     Exit;
 
   StartFeedRefresh(FTreeView.Selected);
@@ -1990,6 +2064,155 @@ end;
 procedure TFormMain.MenuRefreshAllClick(Sender: TObject);
 begin
   StartFeedRefresh(nil);
+end;
+
+procedure TFormMain.AddCollectionNodes;
+var
+  Data: TFeedNodeData;
+begin
+  // Created before loading feeds.xml, so the normal subscriptions follow them.
+  Data := TFeedNodeData.Create;
+  Data.IsFolder := True;
+  Data.CollectionKind := COLLECTION_WATCHED;
+  FTreeView.Items.AddObject(nil, 'Watched', Data);
+
+  Data := TFeedNodeData.Create;
+  Data.IsFolder := True;
+  Data.CollectionKind := COLLECTION_FAVORITES;
+  FTreeView.Items.AddObject(nil, 'Favorites', Data);
+end;
+
+function TFormMain.GetItemFeedURL(AItem: TListItem): string;
+var
+  NodeData: TFeedNodeData;
+begin
+  Result := '';
+  if not Assigned(AItem) then Exit;
+  if AItem.SubItems.Count > 4 then
+  begin
+    Result := AItem.SubItems[4];
+    Exit;
+  end;
+  NodeData := GetSelectedNodeData;
+  if Assigned(NodeData) and (NodeData.CollectionKind = 0) and
+     not NodeData.IsFolder then
+    Result := NodeData.FeedURL;
+end;
+
+function TFormMain.SelectedArticle: TStoredArticle;
+var
+  Item: TListItem;
+begin
+  Result := nil;
+  Item := FListView.Selected;
+  if not Assigned(Item) or (Item.SubItems.Count < 4) or
+     (GetItemFeedURL(Item) = '') or (Item.SubItems[3] = '') then Exit;
+  Result := TStoredArticle.Create;
+  Result.FeedURL := GetItemFeedURL(Item);
+  Result.ItemKey := Item.SubItems[3];
+  Result.Title := Item.Caption;
+  Result.PubDate := Item.SubItems[0];
+  Result.Content := Item.SubItems[1];
+  Result.Link := Item.SubItems[2];
+end;
+
+procedure TFormMain.UpdateFavoriteButton;
+var
+  Item: TListItem;
+  IsFavorite, HaveItem: Boolean;
+begin
+  if not Assigned(FFavoriteButton) then Exit;
+  Item := FListView.Selected;
+  HaveItem := Assigned(Item) and (Item.SubItems.Count > 3);
+  if HaveItem then
+    HaveItem := (GetItemFeedURL(Item) <> '') and (Item.SubItems[3] <> '');
+  FFavoriteButton.Enabled := HaveItem;
+  FFavoriteButton.Visible := HaveItem;
+  IsFavorite := False;
+  if HaveItem then
+    IsFavorite := FCollections.IsFavorite(GetItemFeedURL(Item), Item.SubItems[3]);
+  if IsFavorite then
+  begin
+    FFavoriteButton.Caption := '⭐';
+    FFavoriteButton.Hint := 'Remove article from Favorites';
+  end
+  else
+  begin
+    FFavoriteButton.Caption := '☆';
+    FFavoriteButton.Hint := 'Add article to Favorites';
+  end;
+  if Assigned(FWatchPanel) then
+    FWatchPanel.Visible := HaveItem or (FCurrentVideoURL <> '');
+end;
+
+procedure TFormMain.LoadCollection(AKind: Integer);
+var
+  I: Integer;
+  Article: TStoredArticle;
+  Item: TListItem;
+  WasLoading, WasSelecting: Boolean;
+begin
+  WasLoading := FLoadingFeed;
+  WasSelecting := FInSelectItem;
+  FLoadingFeed := True;
+  FInSelectItem := True;
+  FListView.Items.BeginUpdate;
+  try
+    FListView.Items.Clear;
+    for I := 0 to FCollections.Count(AKind) - 1 do
+    begin
+      Article := FCollections.ArticleAt(AKind, I);
+      Item := FListView.Items.Add;
+      Item.Caption := Article.Title;
+      Item.SubItems.Add(Article.PubDate);
+      Item.SubItems.Add(Article.Content);
+      Item.SubItems.Add(Article.Link);
+      Item.SubItems.Add(Article.ItemKey);
+      Item.SubItems.Add(Article.FeedURL); // original feed in mixed collection
+      if not IsItemRead(Article.FeedURL, Article.ItemKey, Article.Link) then
+        Item.Data := Pointer(1)
+      else
+        Item.Data := nil;
+    end;
+  finally
+    FListView.Items.EndUpdate;
+    FInSelectItem := WasSelecting;
+    FLoadingFeed := WasLoading;
+  end;
+  SetWatchButtonURL('');
+end;
+
+procedure TFormMain.RefreshActiveCollection(AKind: Integer);
+var
+  Data: TFeedNodeData;
+begin
+  Data := GetSelectedNodeData;
+  if Assigned(Data) and (Data.CollectionKind = AKind) then
+  begin
+    LoadCollection(AKind);
+    FHtmlPanel.SetHTMLFromStr('<html><body><p>Select an article to view it.</p></body></html>');
+  end;
+end;
+
+procedure TFormMain.FavoriteButtonClick(Sender: TObject);
+var
+  Article: TStoredArticle;
+begin
+  Article := SelectedArticle;
+  if not Assigned(Article) then Exit;
+  FCollections.ToggleFavorite(Article); // takes ownership
+  RefreshActiveCollection(COLLECTION_FAVORITES);
+  UpdateFavoriteButton;
+end;
+
+procedure TFormMain.RecordSelectedAsWatched;
+var
+  Article: TStoredArticle;
+begin
+  Article := SelectedArticle;
+  if not Assigned(Article) then Exit;
+  FCollections.MarkWatched(Article); // takes ownership
+  // Preserve current video selection and playback while in Watched.
 end;
 
 procedure TFormMain.LoadFeedList;
@@ -2038,6 +2261,11 @@ begin
     FInSelectItem := WasSelecting;
     FLoadingFeed := WasLoading;
   end;
+  // A refresh can replace or clear the selected row.
+  if not Assigned(FListView.Selected) then
+    SetWatchButtonURL('')
+  else
+    UpdateFavoriteButton;
 end;
 
 function TFormMain.MakeItemKey(const AGuid, AId, ALink, ATitle, APubDate: string): string;
@@ -2138,7 +2366,7 @@ var
 begin
   if FRefreshing or FClosing then Exit;
   NodeData := GetSelectedNodeData;
-  if not Assigned(NodeData) then
+  if not Assigned(NodeData) or (NodeData.CollectionKind <> 0) then
     Exit;
 
   if NodeData.IsFolder then

@@ -11,6 +11,7 @@ type
   TFeedNodeData = class
     FeedURL: string;
     IsFolder: Boolean;
+    CollectionKind: Integer; // 0 = subscription, 1 = Watched, 2 = Favorites
   end;
 
   TFeedListEntry = class
