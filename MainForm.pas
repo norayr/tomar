@@ -8,7 +8,7 @@ unit MainForm;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
+  Classes, SysUtils, IniFiles, Forms, Controls, Graphics, Dialogs, ComCtrls, StdCtrls,
   ExtCtrls, Menus, Process, DOM, XMLRead, XMLWrite, fphttpclient, IpHtml, ipmsg, opensslsockets,
   FPImage, FPReadPNG, FPReadJPEG, FPReadGIF, db, dbf, md5, Clipbrd, DateUtils, HtmlProvider, FeedFetchUtils, FeedModel, FeedConfigUtils, FeedListUtils, FeedRefreshThread, FeedDbUtils, ArticleCollections
   {$IFDEF LCLGTK2}
@@ -151,6 +151,7 @@ type
     function IsExecutableInPath(const ProgName: string): Boolean;
     function UserYtDlpPath: string;
     function FindYtDlpForPlayback: string;
+    procedure LoadYouTubeSettings(out ACookiesFromBrowser, AIPVersion: string);
     function CanWatchYouTubeLocally: Boolean;
     procedure SetWatchButtonURL(const AURL: string);
     procedure SetWatchButtonsEnabled(AEnabled: Boolean);
@@ -1004,7 +1005,7 @@ end;
 
 procedure TFormMain.StartMpvWithFormat(const AFormat: string);
 var
-  YtDlpPath: string;
+  YtDlpPath, CookiesFromBrowser, IPVersion: string;
 begin
   if FCurrentVideoURL = '' then
     Exit;
@@ -1027,7 +1028,15 @@ begin
     FMpvProcess.Parameters.Add('--ytdl=yes');
     FMpvProcess.Parameters.Add('--script-opts=ytdl_hook-ytdl_path=' + YtDlpPath);
     FMpvProcess.Parameters.Add('--ytdl-format=' + AFormat);
-    //FMpvProcess.Parameters.Add('--ytdl-raw-options=cookies-from-browser=firefox:/home/inky/.librewolf/vifu5p28.default-release::youtube');
+    LoadYouTubeSettings(CookiesFromBrowser, IPVersion);
+    { Append instead of replacing ytdl-raw-options from mpv.conf.  These
+      settings affect yt-dlp extraction, not mpv's own HTTP connections. }
+    if CookiesFromBrowser <> '' then
+      FMpvProcess.Parameters.Add('--ytdl-raw-options-append=cookies-from-browser=' + CookiesFromBrowser);
+    if IPVersion = 'ipv4' then
+      FMpvProcess.Parameters.Add('--ytdl-raw-options-append=force-ipv4=')
+    else if IPVersion = 'ipv6' then
+      FMpvProcess.Parameters.Add('--ytdl-raw-options-append=force-ipv6=');
     FMpvProcess.Parameters.Add('--cache=yes');
     FMpvProcess.Parameters.Add('--cache-secs=60');
     FMpvProcess.Parameters.Add('--cache-pause=yes');
@@ -1203,11 +1212,47 @@ begin
     Result := IncludeTrailingPathDelimiter(HomeDir) + 'bin/yt-dlp';
 end;
 
+procedure TFormMain.LoadYouTubeSettings(out ACookiesFromBrowser, AIPVersion: string);
+var
+  Ini: TIniFile;
+begin
+  ACookiesFromBrowser := '';
+  AIPVersion := 'auto';
+  Ini := TIniFile.Create(TomarBaseDir + 'tomar.ini');
+  try
+    ACookiesFromBrowser := Trim(Ini.ReadString('YouTube', 'CookiesFromBrowser', ''));
+    AIPVersion := LowerCase(Trim(Ini.ReadString('YouTube', 'IPVersion', 'auto')));
+    if (AIPVersion <> 'ipv4') and (AIPVersion <> 'ipv6') then
+      AIPVersion := 'auto';
+  finally
+    Ini.Free;
+  end;
+end;
+
 function TFormMain.FindYtDlpForPlayback: string;
 var
-  UserPath: string;
+  UserPath, ConfiguredPath: string;
+  Ini: TIniFile;
 begin
   Result := '';
+
+  { An explicitly configured yt-dlp takes priority over automatic discovery. }
+  Ini := TIniFile.Create(TomarBaseDir + 'tomar.ini');
+  try
+    ConfiguredPath := Trim(Ini.ReadString('YouTube', 'YtDlpPath', ''));
+  finally
+    Ini.Free;
+  end;
+  if ConfiguredPath <> '' then
+  begin
+    if Copy(ConfiguredPath, 1, 2) = '~/' then
+      ConfiguredPath := IncludeTrailingPathDelimiter(GetUserDir) + Copy(ConfiguredPath, 3, MaxInt);
+    if (Pos('/', ConfiguredPath) = 0) and IsExecutableInPath(ConfiguredPath) then
+      Exit(ConfiguredPath);
+    if FileExists(ConfiguredPath) and (fpAccess(ConfiguredPath, X_OK) = 0) then
+      Exit(ConfiguredPath);
+    Exit; // Misconfigured path: don't silently choose a different yt-dlp.
+  end;
 
   UserPath := UserYtDlpPath;
   if (UserPath <> '') and FileExists(UserPath) and (fpAccess(UserPath, X_OK) = 0) then

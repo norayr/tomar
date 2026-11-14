@@ -1,0 +1,56 @@
+; Tomar - optional YouTube playback settings
+;
+; Copy this example to ~/.tomar/tomar.ini (as your normal user):
+;   mkdir -p ~/.tomar
+;   cp tomar.ini.example ~/.tomar/tomar.ini
+;
+; As you already guessed, lines beginning with ';' are comments.
+; To enable an example, remove its leading ';' and edit the placeholder values.
+; Uncomment ONLY ONE example for each setting.
+; Changes are read when a Watch button is pressed; no Tomar restart needed.
+
+[YouTube]
+
+; Optional yt-dlp executable. If unset, Tomar looks for ~/bin/yt-dlp
+; first(that's where it saves yt-dlp when you press that button),
+; then yt-dlp from PATH.
+;YtDlpPath=~/bin/yt-dlp
+
+; Optional browser cookies, for sites requiring a signed-in account.
+; If unset, Tomar does not pass browser cookies to yt-dlp.
+;
+; Browser-cookie syntax for Firefox and LibreWolf:
+;   firefox:PROFILE_DIRECTORY[::CONTAINER_NAME]
+; The PROFILE_DIRECTORY is a directory containing cookies.sqlite,
+; NOT the cookies.sqlite file itself. LibreWolf also uses 'firefox:' here.
+;
+; To find your profile:
+;   1. Open Firefox or LibreWolf, enter about:profiles in the address bar.
+;   2. Find the profile in use and copy its "Root Directory" path.
+;   3. Alternatively, on Linux, run:
+;        find ~/.mozilla/firefox ~/.librewolf -name cookies.sqlite 2>/dev/null
+;      Use the containing directory as PROFILE_DIRECTORY.
+;   4. Replace YOUR_USER and PROFILE in one example below; uncomment it.
+;
+; Firefox (default profile; yt-dlp searches standard Firefox locations):
+;CookiesFromBrowser=firefox
+;
+; Firefox (specific profile):
+;CookiesFromBrowser=firefox:/home/YOUR_USER/.mozilla/firefox/PROFILE.default-release
+;
+; LibreWolf (specific profile):
+;CookiesFromBrowser=firefox:/home/YOUR_USER/.librewolf/PROFILE.default-release
+;
+; LibreWolf with a named Firefox container, e.g. a container named youtube:
+;CookiesFromBrowser=firefox:/home/YOUR_USER/.librewolf/PROFILE.default-release::youtube
+;
+; The optional ::youtube suffix restricts cookies to that named container.
+; Omit the suffix if you do not use Firefox containers.
+; The browser profile must contain your signed-in YouTube cookies.
+; Do not share your cookies.sqlite file or exported cookies.
+
+; Connection preference for yt-dlp: auto (default), ipv4, or ipv6.
+; This does NOT force mpv/FFmpeg media streaming to use the same IP family.
+IPVersion=auto
+;IPVersion=ipv4
+;IPVersion=ipv6
